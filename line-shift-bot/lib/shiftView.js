@@ -68,4 +68,59 @@ function buildStoreView(storeId, periodStart, submissions) {
   };
 }
 
-module.exports = { buildStoreView };
+/**
+ * 充足率を算出する。各バンド（ランチ/ディナー×日）について
+ * 「必要人数に対してどれだけ充足しているか」をmin(実数, 必要数)で積み上げ、
+ * 必要人数合計に対する割合(%)を返す。必要人数が未設定のバンドは集計から除外する。
+ */
+function computeFulfillment(store) {
+  let totalRequired = 0;
+  let totalFilled = 0;
+  for (const d of store.dates) {
+    for (const band of [d.lunch, d.dinner]) {
+      if (band.required === null || band.required === undefined) continue;
+      totalRequired += band.required;
+      totalFilled += Math.min(band.entries.length, band.required);
+    }
+  }
+  const rate = totalRequired > 0 ? Math.round((totalFilled / totalRequired) * 100) : null;
+  return { rate, totalRequired, totalFilled };
+}
+
+/**
+ * 提出データを「日付×スタッフ」のカレンダー形式に変換する。
+ * 1スタッフは1日につき出勤希望(ランチ/ディナーいずれか)・休み希望・未入力のいずれか1状態を持つ。
+ */
+function buildCalendarView(storeId, periodStart, submissions) {
+  const store = buildStoreView(storeId, periodStart, submissions);
+
+  const staffMap = new Map();
+  for (const submission of submissions) {
+    if (submission.userId && submission.profile && submission.profile.name) {
+      staffMap.set(submission.userId, submission.profile.name);
+    }
+  }
+
+  const staffRows = Array.from(staffMap.entries()).map(([userId, name]) => {
+    const cells = {};
+    for (const d of store.dates) {
+      const lunchEntry = d.lunch.entries.find((e) => e.userId === userId);
+      const dinnerEntry = d.dinner.entries.find((e) => e.userId === userId);
+      const dayOffEntry = d.dayOff.find((e) => e.userId === userId);
+      if (lunchEntry) {
+        cells[d.date] = { type: "working", band: "lunch", start: lunchEntry.start, end: lunchEntry.end };
+      } else if (dinnerEntry) {
+        cells[d.date] = { type: "working", band: "dinner", start: dinnerEntry.start, end: dinnerEntry.end };
+      } else if (dayOffEntry) {
+        cells[d.date] = { type: "dayoff" };
+      } else {
+        cells[d.date] = { type: "none" };
+      }
+    }
+    return { userId, name, cells };
+  });
+
+  return { ...store, staffRows };
+}
+
+module.exports = { buildStoreView, computeFulfillment, buildCalendarView };

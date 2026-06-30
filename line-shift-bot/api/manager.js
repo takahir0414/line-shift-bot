@@ -1,5 +1,5 @@
 const { getLatestPeriod, listShiftSubmissions } = require("../lib/shiftStore");
-const { buildStoreView } = require("../lib/shiftView");
+const { buildCalendarView } = require("../lib/shiftView");
 const { saveConfirmedShift, getConfirmedShift } = require("../lib/confirmedShiftStore");
 
 function escapeHtml(value) {
@@ -12,35 +12,66 @@ function adoptFieldName(userId, date) {
   return `adopt_${userId}_${date}`;
 }
 
-function renderBandEntries(band, dateISO, adoptedKeys) {
-  if (!band.entries.length) return "<p>-</p>";
-  return band.entries
-    .map((e) => {
-      const fieldName = adoptFieldName(e.userId, dateISO);
-      const checked = adoptedKeys === null || adoptedKeys.has(fieldName) ? "checked" : "";
-      const time = e.start ? `${e.start}-${e.end || ""}` : "時間未入力";
-      return `<label class="entry">
-        <input type="checkbox" name="${escapeHtml(fieldName)}" ${checked}>
-        ${escapeHtml(e.name || "(無名)")}（${escapeHtml(time)}）
-      </label>`;
+const STATUS_LABELS = { shortage: "不足", surplus: "過剰", ok: "OK", unset: "-" };
+const STATUS_CLASS = {
+  shortage: "status-shortage",
+  surplus: "status-surplus",
+  ok: "status-ok",
+  unset: "status-unset",
+};
+
+function renderRequiredRow(label, store, band) {
+  const cells = store.dates
+    .map((d) => `<td>${escapeHtml(d[band].required ?? "-")}</td>`)
+    .join("\n");
+  return `<tr class="row-meta"><th>${escapeHtml(label)}必要人数</th>${cells}</tr>`;
+}
+
+function renderFulfillmentRow(label, store, band) {
+  const cells = store.dates
+    .map((d) => {
+      const b = d[band];
+      const label2 = STATUS_LABELS[b.status] || b.status;
+      return `<td class="${STATUS_CLASS[b.status] || ""}">${b.entries.length}名（${escapeHtml(label2)}）</td>`;
     })
     .join("\n");
+  return `<tr class="row-meta"><th>${escapeHtml(label)}充足</th>${cells}</tr>`;
+}
+
+function renderDayTypeRow(store) {
+  const cells = store.dates
+    .map((d) => `<td>${escapeHtml(d.label)}<br><span class="day-type">${escapeHtml(d.dayTypeLabel)}</span></td>`)
+    .join("\n");
+  return `<tr><th>日付</th>${cells}</tr>`;
+}
+
+function renderCell(cell, userId, date, adoptedKeys) {
+  if (cell.type === "none") return `<td class="cell-none">-</td>`;
+  if (cell.type === "dayoff") return `<td class="cell-dayoff">休</td>`;
+
+  const fieldName = adoptFieldName(userId, date);
+  const checked = adoptedKeys === null || adoptedKeys.has(fieldName) ? "checked" : "";
+  const time = cell.start ? `${cell.start}-${cell.end || ""}` : "時間未入力";
+  const bandLabel = cell.band === "lunch" ? "昼" : "夜";
+  return `<td class="cell-working">
+    <label class="cell-checkbox">
+      <input type="checkbox" name="${escapeHtml(fieldName)}" ${checked}>
+      <span class="cell-band">${escapeHtml(bandLabel)}</span><br>${escapeHtml(time)}
+    </label>
+  </td>`;
+}
+
+function renderStaffRow(staff, store, adoptedKeys) {
+  const cells = store.dates
+    .map((d) => renderCell(staff.cells[d.date], staff.userId, d.date, adoptedKeys))
+    .join("\n");
+  return `<tr><th class="staff-name">${escapeHtml(staff.name)}</th>${cells}</tr>`;
 }
 
 function renderForm(store, key, adoptedKeys, confirmed) {
-  const rows = store.dates
-    .map((d) => {
-      const dayOff = d.dayOff.length
-        ? d.dayOff.map((e) => escapeHtml(e.name || "(無名)")).join("、")
-        : "-";
-      return `<tr>
-        <td>${escapeHtml(d.label)}<br><span class="day-type">${escapeHtml(d.dayTypeLabel)}</span></td>
-        <td>${renderBandEntries(d.lunch, d.date, adoptedKeys)}</td>
-        <td>${renderBandEntries(d.dinner, d.date, adoptedKeys)}</td>
-        <td>${dayOff}</td>
-      </tr>`;
-    })
-    .join("\n");
+  const staffRows = store.staffRows.length
+    ? store.staffRows.map((s) => renderStaffRow(s, store, adoptedKeys)).join("\n")
+    : `<tr><th class="staff-name">-</th><td colspan="${store.dates.length}">出勤希望の提出がありません</td></tr>`;
 
   const confirmedNote = confirmed
     ? `<p class="confirmed-note">前回確定日時: ${escapeHtml(confirmed.confirmedAt)}（${confirmed.entries.length}件採用）。再度「この内容で確定する」を押すと上書きされます。</p>`
@@ -53,11 +84,19 @@ function renderForm(store, key, adoptedKeys, confirmed) {
 <title>店長確認・確定 - ${escapeHtml(store.storeName)}</title>
 <style>
   body { font-family: sans-serif; margin: 24px; color: #222; }
-  table { border-collapse: collapse; width: 100%; margin-bottom: 24px; }
-  th, td { border: 1px solid #ccc; padding: 8px 10px; text-align: left; vertical-align: top; }
-  th { background: #f0f0f0; }
-  .day-type { font-size: 11px; color: #888; }
-  .entry { display: block; margin-bottom: 4px; }
+  .table-wrap { overflow-x: auto; margin-bottom: 24px; }
+  table { border-collapse: collapse; min-width: 100%; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: center; vertical-align: middle; font-size: 13px; white-space: nowrap; }
+  thead th, .row-meta th { background: #f5f5f5; }
+  .staff-name { background: #fafafa; text-align: left; white-space: nowrap; }
+  .day-type { font-size: 10px; color: #888; }
+  .cell-none { color: #ccc; }
+  .cell-dayoff { color: #888; background: #f0f0f0; }
+  .cell-checkbox { display: inline-block; cursor: pointer; }
+  .cell-band { font-size: 10px; color: #888; }
+  .status-shortage { background: #fde2e2; color: #a31515; }
+  .status-surplus { background: #fff4ce; color: #8a6d00; }
+  .status-ok { background: #e3f6e5; color: #1e7d32; }
   .confirmed-note { color: #555; background: #f5f5f5; padding: 8px 12px; border-radius: 4px; }
   button { font-size: 16px; padding: 10px 24px; cursor: pointer; }
 </style>
@@ -70,12 +109,18 @@ ${confirmedNote}
   <input type="hidden" name="key" value="${escapeHtml(key)}">
   <input type="hidden" name="storeId" value="${escapeHtml(store.storeId)}">
   <input type="hidden" name="periodStart" value="${escapeHtml(store.periodStart)}">
-  <table>
-    <thead>
-      <tr><th>日付</th><th>ランチ</th><th>ディナー</th><th>休み希望</th></tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>
+  <div class="table-wrap">
+    <table>
+      <thead>${renderDayTypeRow(store)}</thead>
+      <tbody>
+        ${renderRequiredRow("ランチ", store, "lunch")}
+        ${renderFulfillmentRow("ランチ", store, "lunch")}
+        ${renderRequiredRow("ディナー", store, "dinner")}
+        ${renderFulfillmentRow("ディナー", store, "dinner")}
+        ${staffRows}
+      </tbody>
+    </table>
+  </div>
   <button type="submit">この内容で確定する</button>
 </form>
 </body>
@@ -120,7 +165,7 @@ module.exports = async function handler(req, res) {
     }
 
     const submissions = await listShiftSubmissions(storeId, periodStart);
-    const store = buildStoreView(storeId, periodStart, submissions);
+    const store = buildCalendarView(storeId, periodStart, submissions);
     const confirmed = await getConfirmedShift(storeId, periodStart);
     const adoptedKeys = confirmed
       ? new Set(confirmed.entries.map((e) => adoptFieldName(e.userId, e.date)))
@@ -145,16 +190,16 @@ module.exports = async function handler(req, res) {
     }
 
     const submissions = await listShiftSubmissions(storeId, periodStart);
-    const store = buildStoreView(storeId, periodStart, submissions);
+    const store = buildCalendarView(storeId, periodStart, submissions);
 
     const entries = [];
-    for (const d of store.dates) {
-      for (const band of [d.lunch, d.dinner]) {
-        for (const e of band.entries) {
-          const fieldName = adoptFieldName(e.userId, d.date);
-          if (body[fieldName]) {
-            entries.push({ date: d.date, userId: e.userId, name: e.name, start: e.start, end: e.end });
-          }
+    for (const staff of store.staffRows) {
+      for (const d of store.dates) {
+        const cell = staff.cells[d.date];
+        if (cell.type !== "working") continue;
+        const fieldName = adoptFieldName(staff.userId, d.date);
+        if (body[fieldName]) {
+          entries.push({ date: d.date, userId: staff.userId, name: staff.name, start: cell.start, end: cell.end });
         }
       }
     }
