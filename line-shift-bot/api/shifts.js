@@ -1,6 +1,7 @@
 const { STORES, REQUIRED_HEADCOUNT } = require("../lib/constants");
 const { buildPeriodDates, formatMD, weekdayLabel } = require("../lib/flex");
 const { listStores, listShiftSubmissions, getLatestPeriod } = require("../lib/shiftStore");
+const { evaluateDayStatus } = require("../lib/shiftAnalysis");
 
 const storeNameById = STORES.reduce((acc, s) => {
   acc[s.id] = s.name;
@@ -22,20 +23,30 @@ function buildStoreView(storeId, periodStart, submissions) {
         working.push({ name, start: entry ? entry.start : null, end: entry ? entry.end : null });
       }
     }
+    const requiredHeadcount = REQUIRED_HEADCOUNT[storeId] ?? null;
+    const { status, diff } = evaluateDayStatus(working.length, requiredHeadcount);
+
     return {
       date: iso,
       label: `${formatMD(iso)}（${weekdayLabel(iso)}）`,
-      requiredHeadcount: REQUIRED_HEADCOUNT[storeId] ?? null,
+      requiredHeadcount,
       working,
       dayOff,
+      status,
+      diff,
     };
   });
+
+  const shortageDays = dayViews.filter((d) => d.status === "shortage").length;
+  const surplusDays = dayViews.filter((d) => d.status === "surplus").length;
 
   return {
     storeId,
     storeName: storeNameById[storeId] || storeId,
     periodStart,
     submissionCount: submissions.length,
+    shortageDays,
+    surplusDays,
     dates: dayViews,
   };
 }
@@ -49,6 +60,26 @@ function escapeHtml(value) {
 function renderWorkingEntry(entry) {
   const time = entry.start ? `${entry.start}-${entry.end || ""}` : "時間未入力";
   return `${escapeHtml(entry.name || "(無名)")}（${escapeHtml(time)}）`;
+}
+
+const STATUS_LABELS = {
+  shortage: "不足",
+  surplus: "過剰",
+  ok: "OK",
+  unset: "未設定",
+};
+
+const STATUS_CLASS = {
+  shortage: "status-shortage",
+  surplus: "status-surplus",
+  ok: "status-ok",
+  unset: "status-unset",
+};
+
+function renderStatusCell(d) {
+  const label = STATUS_LABELS[d.status] || d.status;
+  const diffText = d.diff ? `（${d.diff > 0 ? "+" : ""}${d.diff}）` : "";
+  return `<td class="${STATUS_CLASS[d.status] || ""}">${escapeHtml(label)}${escapeHtml(diffText)}</td>`;
 }
 
 function renderStoreTable(store) {
@@ -65,16 +96,17 @@ function renderStoreTable(store) {
         <td>${escapeHtml(d.requiredHeadcount ?? "未設定")}</td>
         <td>${working}</td>
         <td>${dayOff}</td>
+        ${renderStatusCell(d)}
       </tr>`;
     })
     .join("\n");
 
   return `<section>
     <h2>${escapeHtml(store.storeName)}</h2>
-    <p>期間開始: ${escapeHtml(store.periodStart)} ／ 提出人数: ${store.submissionCount}名</p>
+    <p>期間開始: ${escapeHtml(store.periodStart)} ／ 提出人数: ${store.submissionCount}名 ／ 不足: ${store.shortageDays}日 ／ 過剰: ${store.surplusDays}日</p>
     <table>
       <thead>
-        <tr><th>日付</th><th>必要人数</th><th>出勤希望</th><th>休み希望</th></tr>
+        <tr><th>日付</th><th>必要人数</th><th>出勤希望</th><th>休み希望</th><th>状態</th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
@@ -97,6 +129,10 @@ function renderHtmlPage(stores) {
   th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; vertical-align: top; }
   th { background: #f0f0f0; }
   h2 { margin-bottom: 4px; }
+  .status-shortage { background: #fde2e2; color: #a31515; font-weight: bold; }
+  .status-surplus { background: #fff4ce; color: #8a6d00; font-weight: bold; }
+  .status-ok { background: #e3f6e5; color: #1e7d32; }
+  .status-unset { color: #888; }
 </style>
 </head>
 <body>

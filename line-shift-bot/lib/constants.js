@@ -26,10 +26,11 @@ const SHIFT_PERIOD_DAYS = 14;
 const WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"];
 
 // 店舗別の必要人数（1日あたり、出勤希望ベース／休み希望者は含まない）。
-// 本部担当者へのヒアリングが完了するまでのプレースホルダで、全店舗 null（未設定）としている。
-// 値が入った店舗から順に、api/shifts.js 側で過不足判定に利用できるようにする想定。
+// 本部担当者へのヒアリングが完了するまでの仮値として、運用対象の全店舗に一律3人/日を設定している。
+// 本部ヒアリング完了後、店舗ごとの実数値に必ず差し替えること。
+// 「本部」(honbu)はシフト運用対象外のため null（未設定）のままとする。
 const REQUIRED_HEADCOUNT = STORES.reduce((acc, store) => {
-  acc[store.id] = null;
+  acc[store.id] = store.id === "honbu" ? null : 3;
   return acc;
 }, {});
 
