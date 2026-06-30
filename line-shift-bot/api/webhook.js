@@ -1,4 +1,3 @@
-const crypto = require("crypto");
 const { messagingApi, validateSignature } = require("@line/bot-sdk");
 const { getSession, setSession, clearSession } = require("../lib/session");
 const { STORES } = require("../lib/constants");
@@ -22,8 +21,6 @@ const client = new messagingApi.MessagingApiClient({
   channelAccessToken: config.channelAccessToken,
 });
 
-// Vercel Node Functionsはデフォルトでbodyを自動パースするため、
-// LINEの署名検証に必要な「生のリクエストボディ」を自前で取得できるよう無効化する
 module.exports.config = { api: { bodyParser: false } };
 
 function getRawBody(req) {
@@ -56,8 +53,6 @@ module.exports = async function handler(req, res) {
   const body = JSON.parse(rawBody.toString("utf-8"));
   const events = body.events || [];
 
-  // 重要: Vercelのサーバーレス関数はレスポンスを返した直後に処理が打ち切られることがあるため、
-  // 必ずイベント処理(LINEへの返信送信を含む)を完了させてから200を返す。
   await Promise.all(events.map(handleEvent).map((p) => p.catch((e) => console.error(e))));
 
   res.status(200).send("OK");
@@ -65,28 +60,28 @@ module.exports = async function handler(req, res) {
 
 async function handleEvent(event) {
   const userId = event.source && event.source.userId;
+  const replyToken = event.replyToken;
   if (!userId) return;
 
   const session = await getSession(userId);
 
   if (event.type === "message" && event.message.type === "text") {
-    await handleTextMessage(userId, session, event.message.text.trim());
+    await handleTextMessage(userId, replyToken, session, event.message.text.trim());
     return;
   }
 
   if (event.type === "postback") {
-    await handlePostback(userId, session, event);
+    await handlePostback(userId, replyToken, session, event);
     return;
   }
 }
 
-async function handleTextMessage(userId, session, text) {
-  // ---- 初回登録フロー ----
+async function handleTextMessage(userId, replyToken, session, text) {
   if (session.registrationStep === "not_started") {
     session.profile.name = text;
     session.registrationStep = "awaiting_store";
     await setSession(userId, session);
-    await reply(userId, [
+    await reply(replyToken, [
       { type: "text", text: `ありがとうございます！\n次に所属店舗を選択してください` },
       storeSelectMessage(),
     ]);
@@ -96,29 +91,27 @@ async function handleTextMessage(userId, session, text) {
   if (session.registrationStep === "awaiting_store" || session.registrationStep === "awaiting_employment") {
     const msg =
       session.registrationStep === "awaiting_store" ? storeSelectMessage() : employmentTypeMessage();
-    await reply(userId, [{ type: "text", text: "上のボタンから選択してください👆" }, msg]);
+    await reply(replyToken, [{ type: "text", text: "上のボタンから選択してください👆" }, msg]);
     return;
   }
 
-  // ---- 登録済みユーザーの通常メッセージ ----
   if (session.registrationStep === "registered") {
     if (text === "希望を出す" || text === "シフト希望" || text === "希望提出") {
-      await startShiftRequest(userId, session);
+      await startShiftRequest(userId, replyToken, session);
       return;
     }
-    await reply(userId, [
+    await reply(replyToken, [
       { type: "text", text: `「希望を出す」と送るとシフト希望の入力を開始します。` },
     ]);
     return;
   }
 
-  // ---- フォールバック（未登録ユーザーの初回メッセージ）----
-  await reply(userId, [
+  await reply(replyToken, [
     { type: "text", text: "初めまして！シフト管理Botです🙌\nまずお名前（本名）を教えてください" },
   ]);
 }
 
-async function startShiftRequest(userId, session) {
+async function startShiftRequest(userId, replyToken, session) {
   session.requestStep = "selecting_days";
   session.periodStart = getNextPeriodStart();
   session.selectedDates = [];
@@ -128,10 +121,10 @@ async function startShiftRequest(userId, session) {
   session.pendingDate = null;
   session.pendingStartTime = null;
   await setSession(userId, session);
-  await reply(userId, [daySelectMessage(session)]);
+  await reply(replyToken, [daySelectMessage(session)]);
 }
 
-async function handlePostback(userId, session, event) {
+async function handlePostback(userId, replyToken, session, event) {
   const params = new URLSearchParams(event.postback.data);
   const action = params.get("action");
 
@@ -143,7 +136,7 @@ async function handlePostback(userId, session, event) {
       session.profile.storeName = store ? store.name : storeId;
       session.registrationStep = "awaiting_employment";
       await setSession(userId, session);
-      await reply(userId, [employmentTypeMessage()]);
+      await reply(replyToken, [employmentTypeMessage()]);
       return;
     }
 
@@ -151,7 +144,7 @@ async function handlePostback(userId, session, event) {
       session.profile.employmentType = params.get("type");
       session.registrationStep = "registered";
       await setSession(userId, session);
-      await reply(userId, [registrationCompleteMessage(session.profile)]);
+      await reply(replyToken, [registrationCompleteMessage(session.profile)]);
       return;
     }
 
@@ -161,20 +154,20 @@ async function handlePostback(userId, session, event) {
       const isEmployee = session.profile.employmentType === "fulltime";
       cycleDayState(session, date, isEmployee);
       await setSession(userId, session);
-      await reply(userId, [daySelectMessage(session)]);
+      await reply(replyToken, [daySelectMessage(session)]);
       return;
     }
 
     case "days_done": {
       if (session.requestStep !== "selecting_days") return;
       if (session.selectedDates.length === 0 && session.dayOffDates.length === 0) {
-        await reply(userId, [{ type: "text", text: "希望日が選択されていません。日付をタップして選んでください。" }]);
+        await reply(replyToken, [{ type: "text", text: "希望日が選択されていません。日付をタップして選んでください。" }]);
         return;
       }
       session.requestStep = "entering_time";
       session.timeEntryQueue = [...session.selectedDates];
       await setSession(userId, session);
-      await advanceTimeEntry(userId, session);
+      await advanceTimeEntry(userId, replyToken, session);
       return;
     }
 
@@ -188,7 +181,7 @@ async function handlePostback(userId, session, event) {
       if (which === "start") {
         session.pendingStartTime = time;
         await setSession(userId, session);
-        await reply(userId, [timePickerMessage(date, "end")]);
+        await reply(replyToken, [timePickerMessage(date, "end")]);
         return;
       }
 
@@ -197,7 +190,7 @@ async function handlePostback(userId, session, event) {
         session.pendingStartTime = null;
         session.timeEntryQueue.shift();
         await setSession(userId, session);
-        await advanceTimeEntry(userId, session);
+        await advanceTimeEntry(userId, replyToken, session);
         return;
       }
       return;
@@ -210,7 +203,7 @@ async function handlePostback(userId, session, event) {
       session.pendingDate = null;
       session.pendingStartTime = null;
       await setSession(userId, session);
-      await reply(userId, [daySelectMessage(session)]);
+      await reply(replyToken, [daySelectMessage(session)]);
       return;
     }
 
@@ -225,7 +218,7 @@ async function handlePostback(userId, session, event) {
       }));
       session.requestStep = "idle";
       await setSession(userId, session);
-      await reply(userId, [{ type: "text", text: "希望を受け付けました！ありがとうございます😊" }]);
+      await reply(replyToken, [{ type: "text", text: "希望を受け付けました！ありがとうございます😊" }]);
       return;
     }
   }
@@ -251,18 +244,18 @@ function cycleDayState(session, date, isEmployee) {
   }
 }
 
-async function advanceTimeEntry(userId, session) {
+async function advanceTimeEntry(userId, replyToken, session) {
   if (session.timeEntryQueue.length === 0) {
     session.requestStep = "confirming";
     session.pendingDate = null;
     await setSession(userId, session);
-    await reply(userId, [summaryMessage(session)]);
+    await reply(replyToken, [summaryMessage(session)]);
     return;
   }
   const nextDate = session.timeEntryQueue[0];
   session.pendingDate = nextDate;
   await setSession(userId, session);
-  await reply(userId, [timePickerMessage(nextDate, "start")]);
+  await reply(replyToken, [timePickerMessage(nextDate, "start")]);
 }
 
 function getNextPeriodStart() {
@@ -275,6 +268,13 @@ function getNextPeriodStart() {
   return toISODate(next);
 }
 
-async function reply(userId, messages) {
-  await client.pushMessage({ to: userId, messages });
+/**
+ * replyToken（無料）を使って返信する。
+ * 締切リマインダーや確定通知など「Botから能動的に送る」プッシュ通知は、
+ * このファイルとは別の、本部ダッシュボードからのセグメント配信機能側で
+ * client.pushMessage（または multicast）を使って実装する想定。
+ */
+async function reply(replyToken, messages) {
+  if (!replyToken) return;
+  await client.replyMessage({ replyToken, messages });
 }
