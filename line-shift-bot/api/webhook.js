@@ -165,7 +165,7 @@ async function handlePostback(userId, replyToken, session, event) {
         return;
       }
       session.requestStep = "entering_time";
-      session.timeEntryQueue = [...session.selectedDates];
+      session.timeEntryQueue = [...session.selectedDates].sort();
       await setSession(userId, session);
       await advanceTimeEntry(userId, replyToken, session);
       return;
