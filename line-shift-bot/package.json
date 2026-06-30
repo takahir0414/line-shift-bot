@@ -1,0 +1,10 @@
+{
+  "name": "line-shift-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "将泰庵グループ シフト管理AI - LINE Bot (希望回収・登録フロー)",
+  "main": "api/webhook.js",
+  "dependencies": {
+    "@line/bot-sdk": "^11.0.2"
+  }
+}

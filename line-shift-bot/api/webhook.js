@@ -1,0 +1,287 @@
+const crypto = require("crypto");
+const { messagingApi, validateSignature } = require("@line/bot-sdk");
+const { getSession, setSession, clearSession } = require("../lib/session");
+const { STORES } = require("../lib/constants");
+const {
+  storeSelectMessage,
+  employmentTypeMessage,
+  registrationCompleteMessage,
+  daySelectMessage,
+  timePickerMessage,
+  summaryMessage,
+  buildPeriodDates,
+  toISODate,
+} = require("../lib/flex");
+
+const config = {
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
+};
+
+const client = new messagingApi.MessagingApiClient({
+  channelAccessToken: config.channelAccessToken,
+});
+
+// Vercel Node Functionsはデフォルトでbodyを自動パースするため、
+// LINEの署名検証に必要な「生のリクエストボディ」を自前で取得できるよう無効化する
+module.exports.config = { api: { bodyParser: false } };
+
+function getRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+function verifySignature(rawBody, signature) {
+  return validateSignature(rawBody, config.channelSecret, signature);
+}
+
+module.exports = async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.status(200).send("OK");
+    return;
+  }
+
+  const rawBody = await getRawBody(req);
+  const signature = req.headers["x-line-signature"];
+
+  if (!signature || !verifySignature(rawBody, signature)) {
+    res.status(401).send("Invalid signature");
+    return;
+  }
+
+  const body = JSON.parse(rawBody.toString("utf-8"));
+  const events = body.events || [];
+
+  // LINEプラットフォームには素早く200を返す必要があるため、処理は待たずに先にACKする
+  res.status(200).send("OK");
+
+  await Promise.all(events.map(handleEvent).map((p) => p.catch((e) => console.error(e))));
+};
+
+async function handleEvent(event) {
+  const userId = event.source && event.source.userId;
+  if (!userId) return;
+
+  const session = await getSession(userId);
+
+  if (event.type === "message" && event.message.type === "text") {
+    await handleTextMessage(userId, session, event.message.text.trim());
+    return;
+  }
+
+  if (event.type === "postback") {
+    await handlePostback(userId, session, event);
+    return;
+  }
+}
+
+async function handleTextMessage(userId, session, text) {
+  // ---- 初回登録フロー ----
+  if (session.registrationStep === "not_started") {
+    session.profile.name = text;
+    session.registrationStep = "awaiting_store";
+    await setSession(userId, session);
+    await reply(userId, [
+      { type: "text", text: `ありがとうございます！\n次に所属店舗を選択してください` },
+      storeSelectMessage(),
+    ]);
+    return;
+  }
+
+  if (session.registrationStep === "awaiting_store" || session.registrationStep === "awaiting_employment") {
+    // ボタン選択待ちの間にテキストが来た場合はガイドし直す
+    const msg =
+      session.registrationStep === "awaiting_store" ? storeSelectMessage() : employmentTypeMessage();
+    await reply(userId, [{ type: "text", text: "上のボタンから選択してください👆" }, msg]);
+    return;
+  }
+
+  // ---- 登録済みユーザーの通常メッセージ ----
+  if (session.registrationStep === "registered") {
+    if (text === "希望を出す" || text === "シフト希望" || text === "希望提出") {
+      await startShiftRequest(userId, session);
+      return;
+    }
+    await reply(userId, [
+      { type: "text", text: `「希望を出す」と送るとシフト希望の入力を開始します。` },
+    ]);
+    return;
+  }
+
+  // ---- フォールバック（未登録ユーザーの初回メッセージ）----
+  await reply(userId, [
+    { type: "text", text: "初めまして！シフト管理Botです🙌\nまずお名前（本名）を教えてください" },
+  ]);
+}
+
+async function startShiftRequest(userId, session) {
+  session.requestStep = "selecting_days";
+  session.periodStart = getNextPeriodStart();
+  session.selectedDates = [];
+  session.dayOffDates = [];
+  session.timeEntries = {};
+  session.timeEntryQueue = [];
+  session.pendingDate = null;
+  session.pendingStartTime = null;
+  await setSession(userId, session);
+  await reply(userId, [daySelectMessage(session)]);
+}
+
+async function handlePostback(userId, session, event) {
+  const params = new URLSearchParams(event.postback.data);
+  const action = params.get("action");
+
+  switch (action) {
+    case "select_store": {
+      const storeId = params.get("storeId");
+      const store = STORES.find((s) => s.id === storeId);
+      session.profile.storeId = storeId;
+      session.profile.storeName = store ? store.name : storeId;
+      session.registrationStep = "awaiting_employment";
+      await setSession(userId, session);
+      await reply(userId, [employmentTypeMessage()]);
+      return;
+    }
+
+    case "select_employment": {
+      session.profile.employmentType = params.get("type");
+      session.registrationStep = "registered";
+      await setSession(userId, session);
+      await reply(userId, [registrationCompleteMessage(session.profile)]);
+      return;
+    }
+
+    case "cycle_day": {
+      if (session.requestStep !== "selecting_days") return;
+      const date = params.get("date");
+      const isEmployee = session.profile.employmentType === "fulltime";
+      cycleDayState(session, date, isEmployee);
+      await setSession(userId, session);
+      await reply(userId, [daySelectMessage(session)]);
+      return;
+    }
+
+    case "days_done": {
+      if (session.requestStep !== "selecting_days") return;
+      if (session.selectedDates.length === 0 && session.dayOffDates.length === 0) {
+        await reply(userId, [{ type: "text", text: "希望日が選択されていません。日付をタップして選んでください。" }]);
+        return;
+      }
+      session.requestStep = "entering_time";
+      session.timeEntryQueue = [...session.selectedDates];
+      await setSession(userId, session);
+      await advanceTimeEntry(userId, session);
+      return;
+    }
+
+    case "set_time": {
+      if (session.requestStep !== "entering_time") return;
+      const which = params.get("which");
+      const date = params.get("date");
+      const time = event.postback.params && event.postback.params.time;
+      if (!time || date !== session.pendingDate) return;
+
+      if (which === "start") {
+        session.pendingStartTime = time;
+        await setSession(userId, session);
+        await reply(userId, [timePickerMessage(date, "end")]);
+        return;
+      }
+
+      if (which === "end") {
+        session.timeEntries[date] = { start: session.pendingStartTime, end: time };
+        session.pendingStartTime = null;
+        session.timeEntryQueue.shift(); // 先頭（=現在処理中の日付）を取り除く
+        await setSession(userId, session);
+        await advanceTimeEntry(userId, session);
+        return;
+      }
+      return;
+    }
+
+    case "edit_restart": {
+      session.requestStep = "selecting_days";
+      session.timeEntries = {};
+      session.timeEntryQueue = [];
+      session.pendingDate = null;
+      session.pendingStartTime = null;
+      await setSession(userId, session);
+      await reply(userId, [daySelectMessage(session)]);
+      return;
+    }
+
+    case "submit": {
+      // TODO（次フェーズ）: ここで処理基盤（Vercel上の分類・過不足検知ロジック）へ
+      // 希望データを送信し、DBの「希望シフト」テーブルに保存する。
+      // 現状はWebhook側でセッションを完了状態にするのみ。
+      console.log("SHIFT_SUBMISSION", JSON.stringify({
+        userId,
+        profile: session.profile,
+        periodStart: session.periodStart,
+        selectedDates: session.selectedDates,
+        dayOffDates: session.dayOffDates,
+        timeEntries: session.timeEntries,
+      }));
+      session.requestStep = "idle";
+      await setSession(userId, session);
+      await reply(userId, [{ type: "text", text: "希望を受け付けました！ありがとうございます😊" }]);
+      return;
+    }
+  }
+}
+
+/** 日付ボタンの状態循環：未選択 → 出勤希望 → （社員のみ）休み希望 → 未選択 */
+function cycleDayState(session, date, isEmployee) {
+  const isSelected = session.selectedDates.includes(date);
+  const isDayOff = session.dayOffDates.includes(date);
+
+  if (!isSelected && !isDayOff) {
+    session.selectedDates.push(date);
+    return;
+  }
+  if (isSelected) {
+    session.selectedDates = session.selectedDates.filter((d) => d !== date);
+    if (isEmployee) {
+      session.dayOffDates.push(date);
+    }
+    return;
+  }
+  if (isDayOff) {
+    session.dayOffDates = session.dayOffDates.filter((d) => d !== date);
+  }
+}
+
+/** 時間帯入力キューを進める。キューが空ならサマリーを表示する */
+async function advanceTimeEntry(userId, session) {
+  if (session.timeEntryQueue.length === 0) {
+    session.requestStep = "confirming";
+    session.pendingDate = null;
+    await setSession(userId, session);
+    await reply(userId, [summaryMessage(session)]);
+    return;
+  }
+  const nextDate = session.timeEntryQueue[0];
+  session.pendingDate = nextDate;
+  await setSession(userId, session);
+  await reply(userId, [timePickerMessage(nextDate, "start")]);
+}
+
+/** 次の2週間サイクルの開始日（直近の月曜）を返す */
+function getNextPeriodStart() {
+  const now = new Date();
+  const jstNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+  const day = jstNow.getDay(); // 0=日, 1=月...
+  const diffToNextMonday = ((8 - day) % 7) || 7; // 今日が月曜でも次の月曜を開始日とする
+  const next = new Date(jstNow);
+  next.setDate(jstNow.getDate() + diffToNextMonday);
+  return toISODate(next);
+}
+
+async function reply(userId, messages) {
+  // pushMessageを使用（replyTokenはイベント処理を非同期化した都合上ここでは扱わない）
+  await client.pushMessage({ to: userId, messages });
+}
