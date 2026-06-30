@@ -228,19 +228,19 @@ function cycleDayState(session, date, isEmployee) {
   const isSelected = session.selectedDates.includes(date);
   const isDayOff = session.dayOffDates.includes(date);
 
-  if (!isSelected && !isDayOff) {
-    session.selectedDates.push(date);
-    return;
-  }
-  if (isSelected) {
-    session.selectedDates = session.selectedDates.filter((d) => d !== date);
-    if (isEmployee) {
+  if (isEmployee) {
+    if (isDayOff) {
+      session.dayOffDates = session.dayOffDates.filter((d) => d !== date);
+    } else {
       session.dayOffDates.push(date);
     }
     return;
   }
-  if (isDayOff) {
-    session.dayOffDates = session.dayOffDates.filter((d) => d !== date);
+
+  if (!isSelected) {
+    session.selectedDates.push(date);
+  } else {
+    session.selectedDates = session.selectedDates.filter((d) => d !== date);
   }
 }
 

@@ -102,7 +102,8 @@ function formatEndTime(start, end) {
 /**
  * 2週間分の日付選択グリッド。
  * 各日付ボタンはタップする度に 状態が循環する：
- *   none → 出勤希望（赤） → （社員のみ）休み希望（紺） → none
+ *   アルバイト・パート: none → 出勤希望（赤） → none
+ *   社員: none → 休み希望（紺） → none
  */
 function daySelectMessage(session) {
   const dates = buildPeriodDates(session.periodStart);
@@ -135,7 +136,7 @@ function daySelectMessage(session) {
           {
             type: "text",
             text: isEmployee
-              ? "タップする度に「出勤希望(赤)→休み希望(紺)→未選択」と切り替わります"
+              ? "タップする度に「休み希望(紺)→未選択」と切り替わります"
               : "タップする度に「出勤希望(赤)→未選択」と切り替わります",
             size: "xs",
             color: TEXT_GRAY,
@@ -152,7 +153,11 @@ function daySelectMessage(session) {
             type: "button",
             style: "primary",
             color: NAVY,
-            action: { type: "postback", label: "次へ（時間帯を入力する）", data: "action=days_done" },
+            action: {
+              type: "postback",
+              label: isEmployee ? "次へ（この内容で提出）" : "次へ（時間帯を入力する）",
+              data: "action=days_done",
+            },
           },
         ],
       },
