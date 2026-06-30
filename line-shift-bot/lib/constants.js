@@ -25,12 +25,20 @@ const SHIFT_PERIOD_DAYS = 14;
 
 const WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"];
 
-// 店舗別の必要人数（1日あたり、出勤希望ベース／休み希望者は含まない）。
-// 本部担当者へのヒアリングが完了するまでの仮値として、運用対象の全店舗に一律3人/日を設定している。
+// 店舗別の必要人数（ランチ/ディナー×平日/祝休日、出勤希望ベース／休み希望者は含まない）。
+// 本部担当者へのヒアリングが完了するまでの暫定値として、運用対象の全店舗に
+// 平日ランチ3人・平日ディナー3人・祝休日ランチ5人・祝休日ディナー5人を一律設定している。
 // 本部ヒアリング完了後、店舗ごとの実数値に必ず差し替えること。
 // 「本部」(honbu)はシフト運用対象外のため null（未設定）のままとする。
+const PROVISIONAL_HEADCOUNT = {
+  weekdayLunch: 3,
+  weekdayDinner: 3,
+  holidayLunch: 5,
+  holidayDinner: 5,
+};
+
 const REQUIRED_HEADCOUNT = STORES.reduce((acc, store) => {
-  acc[store.id] = store.id === "honbu" ? null : 3;
+  acc[store.id] = store.id === "honbu" ? null : { ...PROVISIONAL_HEADCOUNT };
   return acc;
 }, {});
 

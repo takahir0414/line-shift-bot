@@ -1,55 +1,5 @@
-const { STORES, REQUIRED_HEADCOUNT } = require("../lib/constants");
-const { buildPeriodDates, formatMD, weekdayLabel } = require("../lib/flex");
 const { listStores, listShiftSubmissions, getLatestPeriod } = require("../lib/shiftStore");
-const { evaluateDayStatus } = require("../lib/shiftAnalysis");
-
-const storeNameById = STORES.reduce((acc, s) => {
-  acc[s.id] = s.name;
-  return acc;
-}, {});
-
-function buildStoreView(storeId, periodStart, submissions) {
-  const dates = buildPeriodDates(periodStart);
-
-  const dayViews = dates.map((iso) => {
-    const working = [];
-    const dayOff = [];
-    for (const submission of submissions) {
-      const name = submission.profile && submission.profile.name;
-      if (submission.dayOffDates && submission.dayOffDates.includes(iso)) {
-        dayOff.push({ name });
-      } else if (submission.selectedDates && submission.selectedDates.includes(iso)) {
-        const entry = submission.timeEntries && submission.timeEntries[iso];
-        working.push({ name, start: entry ? entry.start : null, end: entry ? entry.end : null });
-      }
-    }
-    const requiredHeadcount = REQUIRED_HEADCOUNT[storeId] ?? null;
-    const { status, diff } = evaluateDayStatus(working.length, requiredHeadcount);
-
-    return {
-      date: iso,
-      label: `${formatMD(iso)}（${weekdayLabel(iso)}）`,
-      requiredHeadcount,
-      working,
-      dayOff,
-      status,
-      diff,
-    };
-  });
-
-  const shortageDays = dayViews.filter((d) => d.status === "shortage").length;
-  const surplusDays = dayViews.filter((d) => d.status === "surplus").length;
-
-  return {
-    storeId,
-    storeName: storeNameById[storeId] || storeId,
-    periodStart,
-    submissionCount: submissions.length,
-    shortageDays,
-    surplusDays,
-    dates: dayViews,
-  };
-}
+const { buildStoreView } = require("../lib/shiftView");
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => (
@@ -76,37 +26,38 @@ const STATUS_CLASS = {
   unset: "status-unset",
 };
 
-function renderStatusCell(d) {
-  const label = STATUS_LABELS[d.status] || d.status;
-  const diffText = d.diff ? `（${d.diff > 0 ? "+" : ""}${d.diff}）` : "";
-  return `<td class="${STATUS_CLASS[d.status] || ""}">${escapeHtml(label)}${escapeHtml(diffText)}</td>`;
+function renderBandCell(band) {
+  const entriesHtml = band.entries.length ? band.entries.map(renderWorkingEntry).join("<br>") : "-";
+  const label = STATUS_LABELS[band.status] || band.status;
+  const diffText = band.diff ? `（${band.diff > 0 ? "+" : ""}${band.diff}）` : "";
+  const requiredText = band.required ?? "未設定";
+  return `<td class="${STATUS_CLASS[band.status] || ""}">
+    <div>${entriesHtml}</div>
+    <div class="band-status">必要${escapeHtml(requiredText)}名／${escapeHtml(label)}${escapeHtml(diffText)}</div>
+  </td>`;
 }
 
 function renderStoreTable(store) {
   const rows = store.dates
     .map((d) => {
-      const working = d.working.length
-        ? d.working.map(renderWorkingEntry).join("<br>")
-        : "-";
       const dayOff = d.dayOff.length
         ? d.dayOff.map((e) => escapeHtml(e.name || "(無名)")).join("<br>")
         : "-";
       return `<tr>
-        <td>${escapeHtml(d.label)}</td>
-        <td>${escapeHtml(d.requiredHeadcount ?? "未設定")}</td>
-        <td>${working}</td>
+        <td>${escapeHtml(d.label)}<br><span class="day-type">${escapeHtml(d.dayTypeLabel)}</span></td>
+        ${renderBandCell(d.lunch)}
+        ${renderBandCell(d.dinner)}
         <td>${dayOff}</td>
-        ${renderStatusCell(d)}
       </tr>`;
     })
     .join("\n");
 
   return `<section>
     <h2>${escapeHtml(store.storeName)}</h2>
-    <p>期間開始: ${escapeHtml(store.periodStart)} ／ 提出人数: ${store.submissionCount}名 ／ 不足: ${store.shortageDays}日 ／ 過剰: ${store.surplusDays}日</p>
+    <p>期間開始: ${escapeHtml(store.periodStart)} ／ 提出人数: ${store.submissionCount}名 ／ 不足コマ: ${store.shortageSlots} ／ 過剰コマ: ${store.surplusSlots}</p>
     <table>
       <thead>
-        <tr><th>日付</th><th>必要人数</th><th>出勤希望</th><th>休み希望</th><th>状態</th></tr>
+        <tr><th>日付</th><th>ランチ</th><th>ディナー</th><th>休み希望</th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
@@ -129,10 +80,15 @@ function renderHtmlPage(stores) {
   th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; vertical-align: top; }
   th { background: #f0f0f0; }
   h2 { margin-bottom: 4px; }
-  .status-shortage { background: #fde2e2; color: #a31515; font-weight: bold; }
-  .status-surplus { background: #fff4ce; color: #8a6d00; font-weight: bold; }
-  .status-ok { background: #e3f6e5; color: #1e7d32; }
-  .status-unset { color: #888; }
+  .day-type { font-size: 11px; color: #888; }
+  .band-status { font-size: 11px; color: #555; margin-top: 4px; }
+  .status-shortage { background: #fde2e2; }
+  .status-shortage .band-status { color: #a31515; font-weight: bold; }
+  .status-surplus { background: #fff4ce; }
+  .status-surplus .band-status { color: #8a6d00; font-weight: bold; }
+  .status-ok { background: #e3f6e5; }
+  .status-ok .band-status { color: #1e7d32; }
+  .status-unset .band-status { color: #888; }
 </style>
 </head>
 <body>
