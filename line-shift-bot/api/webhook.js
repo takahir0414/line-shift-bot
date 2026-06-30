@@ -1,5 +1,6 @@
 const { messagingApi, validateSignature } = require("@line/bot-sdk");
 const { getSession, setSession, clearSession } = require("../lib/session");
+const { saveShiftSubmission } = require("../lib/shiftStore");
 const { STORES } = require("../lib/constants");
 const {
   storeSelectMessage,
@@ -208,14 +209,17 @@ async function handlePostback(userId, replyToken, session, event) {
     }
 
     case "submit": {
-      console.log("SHIFT_SUBMISSION", JSON.stringify({
+      const submission = {
         userId,
         profile: session.profile,
         periodStart: session.periodStart,
         selectedDates: session.selectedDates,
         dayOffDates: session.dayOffDates,
         timeEntries: session.timeEntries,
-      }));
+        submittedAt: new Date().toISOString(),
+      };
+      console.log("SHIFT_SUBMISSION", JSON.stringify(submission));
+      await saveShiftSubmission(session.profile.storeId, session.periodStart, userId, submission);
       session.requestStep = "idle";
       await setSession(userId, session);
       await reply(replyToken, [{ type: "text", text: "希望を受け付けました！ありがとうございます😊" }]);

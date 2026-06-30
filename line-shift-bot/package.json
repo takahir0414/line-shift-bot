@@ -5,6 +5,7 @@
   "description": "将泰庵グループ シフト管理AI - LINE Bot (希望回収・登録フロー)",
   "main": "api/webhook.js",
   "dependencies": {
-    "@line/bot-sdk": "^11.0.2"
+    "@line/bot-sdk": "^11.0.2",
+    "@upstash/redis": "^1.34.0"
   }
 }

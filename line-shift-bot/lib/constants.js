@@ -25,4 +25,12 @@ const SHIFT_PERIOD_DAYS = 14;
 
 const WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"];
 
-module.exports = { STORES, EMPLOYMENT_TYPES, SHIFT_PERIOD_DAYS, WEEKDAY_LABELS };
+// 店舗別の必要人数（1日あたり、出勤希望ベース／休み希望者は含まない）。
+// 本部担当者へのヒアリングが完了するまでのプレースホルダで、全店舗 null（未設定）としている。
+// 値が入った店舗から順に、api/shifts.js 側で過不足判定に利用できるようにする想定。
+const REQUIRED_HEADCOUNT = STORES.reduce((acc, store) => {
+  acc[store.id] = null;
+  return acc;
+}, {});
+
+module.exports = { STORES, EMPLOYMENT_TYPES, SHIFT_PERIOD_DAYS, WEEKDAY_LABELS, REQUIRED_HEADCOUNT };

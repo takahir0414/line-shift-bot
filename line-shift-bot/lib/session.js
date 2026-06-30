@@ -1,23 +1,17 @@
 /**
  * セッション管理
  * ------------------------------------------------------------
- * Vercelのサーバーレス関数はリクエストごとにインスタンスが使い回されない（スケールアウト・
- * コールドスタートがある）ため、メモリ上のMapだけでは本番運用で会話状態が消えてしまいます。
- *
- * 本番投入時は Upstash Redis（Vercel Marketplace連携あり）や Vercel KV 等、
- * サーバーレスから使える永続ストアに置き換えてください。
- * このファイルは「差し替えやすいインターフェース」として、get/set/clearの3関数だけを
- * 公開しています。今はローカル検証用にメモリ実装を入れています。
- *
- * 差し替え例（Upstash Redis版）:
- *   const { Redis } = require("@upstash/redis");
- *   const redis = Redis.fromEnv();
- *   async function getSession(userId) { return (await redis.get(`session:${userId}`)) || createEmptySession(); }
- *   async function setSession(userId, session) { await redis.set(`session:${userId}`, session); }
- *   async function clearSession(userId) { await redis.del(`session:${userId}`); }
+ * Upstash Redis（Vercel Marketplace連携）に会話状態を永続化する。
+ * サーバーレス関数のコールドスタート・スケールアウトでもセッションが消えないようにするため。
+ * get/set/clearの3関数だけを公開する「差し替えやすいインターフェース」は維持している。
  */
+const { redis } = require("./redisClient");
 
-const memoryStore = new Map();
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30日（未使用セッションの自然消滅用）
+
+function sessionKey(userId) {
+  return `session:${userId}`;
+}
 
 function createEmptySession() {
   return {
@@ -38,18 +32,16 @@ function createEmptySession() {
 }
 
 async function getSession(userId) {
-  if (!memoryStore.has(userId)) {
-    memoryStore.set(userId, createEmptySession());
-  }
-  return memoryStore.get(userId);
+  const stored = await redis.get(sessionKey(userId));
+  return stored || createEmptySession();
 }
 
 async function setSession(userId, session) {
-  memoryStore.set(userId, session);
+  await redis.set(sessionKey(userId), session, { ex: SESSION_TTL_SECONDS });
 }
 
 async function clearSession(userId) {
-  memoryStore.set(userId, createEmptySession());
+  await redis.del(sessionKey(userId));
 }
 
 module.exports = { getSession, setSession, clearSession, createEmptySession };
