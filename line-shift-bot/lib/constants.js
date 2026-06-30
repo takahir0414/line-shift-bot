@@ -6,11 +6,14 @@ const STORES = [
   { id: "honten", name: "本店" },
   { id: "hanare", name: "はなれ店" },
   { id: "chiba_sogo", name: "千葉そごう店" },
-  { id: "tokugawa", name: "徳川店" },
+  { id: "tokugawa", name: "徳川商店" },
   { id: "plena", name: "プレナ店" },
-  { id: "natsumi", name: "夏見店" },
-  { id: "other", name: "その他（本部に確認）" },
+  { id: "natsumi", name: "焼肉とごはんの奇跡" },
+  { id: "wagyu_steak_hamburg", name: "和牛ステーキハンバーグ店" },
+  { id: "honbu", name: "本部" },
 ];
+
+
 
 const EMPLOYMENT_TYPES = [
   { id: "fulltime", label: "社員" },
