@@ -12,6 +12,28 @@ function adoptFieldName(userId, date) {
   return `adopt_${userId}_${date}`;
 }
 
+// 営業時間スケール: 8:00〜26:00（深夜2時）の18時間を100%として時間軸バーを描画する。
+const SCALE_START_MINUTES = 8 * 60;
+const SCALE_END_MINUTES = 26 * 60;
+const SCALE_RANGE_MINUTES = SCALE_END_MINUTES - SCALE_START_MINUTES;
+
+function timeToMinutes(time) {
+  const [h, m] = time.split(":").map(Number);
+  let minutes = h * 60 + m;
+  if (minutes < SCALE_START_MINUTES) minutes += 24 * 60; // 日またぎ（例: 01:00→25:00扱い）
+  return minutes;
+}
+
+function renderTimeBar(start, end, band) {
+  if (!start || !end) return "";
+  const startMin = timeToMinutes(start);
+  const endMin = timeToMinutes(end);
+  const left = Math.max(0, Math.min(100, ((startMin - SCALE_START_MINUTES) / SCALE_RANGE_MINUTES) * 100));
+  const width = Math.max(2, Math.min(100 - left, ((endMin - startMin) / SCALE_RANGE_MINUTES) * 100));
+  const cls = band === "lunch" ? "bar-lunch" : "bar-dinner";
+  return `<div class="time-bar-track"><div class="time-bar-fill ${cls}" style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%"></div></div>`;
+}
+
 const STATUS_LABELS = { shortage: "不足", surplus: "過剰", ok: "OK", unset: "-" };
 const STATUS_CLASS = {
   shortage: "status-shortage",
@@ -58,6 +80,7 @@ function renderCell(cell, userId, date, adoptedKeys) {
       <input type="checkbox" name="${escapeHtml(fieldName)}" ${checked}>
       <span class="cell-band">${escapeHtml(bandLabel)}</span><br>${escapeHtml(time)}
     </label>
+    ${renderTimeBar(cell.start, cell.end, cell.band)}
   </td>`;
 }
 
@@ -94,16 +117,25 @@ function renderForm(store, key, adoptedKeys, confirmed) {
   .cell-dayoff { color: #888; background: #f0f0f0; }
   .cell-checkbox { display: inline-block; cursor: pointer; }
   .cell-band { font-size: 10px; color: #888; }
+  .time-bar-track { position: relative; width: 64px; height: 6px; background: #eee; border-radius: 3px; margin: 4px auto 0; }
+  .time-bar-fill { position: absolute; top: 0; height: 100%; border-radius: 3px; }
+  .bar-lunch { background: #f2a93b; }
+  .bar-dinner { background: #4a78d6; }
   .status-shortage { background: #fde2e2; color: #a31515; }
   .status-surplus { background: #fff4ce; color: #8a6d00; }
   .status-ok { background: #e3f6e5; color: #1e7d32; }
   .confirmed-note { color: #555; background: #f5f5f5; padding: 8px 12px; border-radius: 4px; }
+  .scale-note { font-size: 12px; color: #777; }
+  .bar-lunch-dot, .bar-dinner-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 2px; }
+  .bar-lunch-dot { background: #f2a93b; }
+  .bar-dinner-dot { background: #4a78d6; }
   button { font-size: 16px; padding: 10px 24px; cursor: pointer; }
 </style>
 </head>
 <body>
 <h1>店長確認・確定 - ${escapeHtml(store.storeName)}</h1>
 <p>期間開始: ${escapeHtml(store.periodStart)} ／ 提出人数: ${store.submissionCount}名</p>
+<p class="scale-note">セル内の横棒は出勤時間帯のイメージです（左端8:00〜右端26:00のスケール／<span class="bar-lunch-dot"></span>昼・<span class="bar-dinner-dot"></span>夜）</p>
 ${confirmedNote}
 <form method="POST" action="/api/manager">
   <input type="hidden" name="key" value="${escapeHtml(key)}">
