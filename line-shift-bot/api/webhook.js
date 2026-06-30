@@ -56,10 +56,11 @@ module.exports = async function handler(req, res) {
   const body = JSON.parse(rawBody.toString("utf-8"));
   const events = body.events || [];
 
-  // LINEプラットフォームには素早く200を返す必要があるため、処理は待たずに先にACKする
-  res.status(200).send("OK");
-
+  // 重要: Vercelのサーバーレス関数はレスポンスを返した直後に処理が打ち切られることがあるため、
+  // 必ずイベント処理(LINEへの返信送信を含む)を完了させてから200を返す。
   await Promise.all(events.map(handleEvent).map((p) => p.catch((e) => console.error(e))));
+
+  res.status(200).send("OK");
 };
 
 async function handleEvent(event) {
@@ -93,7 +94,6 @@ async function handleTextMessage(userId, session, text) {
   }
 
   if (session.registrationStep === "awaiting_store" || session.registrationStep === "awaiting_employment") {
-    // ボタン選択待ちの間にテキストが来た場合はガイドし直す
     const msg =
       session.registrationStep === "awaiting_store" ? storeSelectMessage() : employmentTypeMessage();
     await reply(userId, [{ type: "text", text: "上のボタンから選択してください👆" }, msg]);
@@ -195,7 +195,7 @@ async function handlePostback(userId, session, event) {
       if (which === "end") {
         session.timeEntries[date] = { start: session.pendingStartTime, end: time };
         session.pendingStartTime = null;
-        session.timeEntryQueue.shift(); // 先頭（=現在処理中の日付）を取り除く
+        session.timeEntryQueue.shift();
         await setSession(userId, session);
         await advanceTimeEntry(userId, session);
         return;
@@ -215,9 +215,6 @@ async function handlePostback(userId, session, event) {
     }
 
     case "submit": {
-      // TODO（次フェーズ）: ここで処理基盤（Vercel上の分類・過不足検知ロジック）へ
-      // 希望データを送信し、DBの「希望シフト」テーブルに保存する。
-      // 現状はWebhook側でセッションを完了状態にするのみ。
       console.log("SHIFT_SUBMISSION", JSON.stringify({
         userId,
         profile: session.profile,
@@ -234,7 +231,6 @@ async function handlePostback(userId, session, event) {
   }
 }
 
-/** 日付ボタンの状態循環：未選択 → 出勤希望 → （社員のみ）休み希望 → 未選択 */
 function cycleDayState(session, date, isEmployee) {
   const isSelected = session.selectedDates.includes(date);
   const isDayOff = session.dayOffDates.includes(date);
@@ -255,7 +251,6 @@ function cycleDayState(session, date, isEmployee) {
   }
 }
 
-/** 時間帯入力キューを進める。キューが空ならサマリーを表示する */
 async function advanceTimeEntry(userId, session) {
   if (session.timeEntryQueue.length === 0) {
     session.requestStep = "confirming";
@@ -270,18 +265,16 @@ async function advanceTimeEntry(userId, session) {
   await reply(userId, [timePickerMessage(nextDate, "start")]);
 }
 
-/** 次の2週間サイクルの開始日（直近の月曜）を返す */
 function getNextPeriodStart() {
   const now = new Date();
   const jstNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
-  const day = jstNow.getDay(); // 0=日, 1=月...
-  const diffToNextMonday = ((8 - day) % 7) || 7; // 今日が月曜でも次の月曜を開始日とする
+  const day = jstNow.getDay();
+  const diffToNextMonday = ((8 - day) % 7) || 7;
   const next = new Date(jstNow);
   next.setDate(jstNow.getDate() + diffToNextMonday);
   return toISODate(next);
 }
 
 async function reply(userId, messages) {
-  // pushMessageを使用（replyTokenはイベント処理を非同期化した都合上ここでは扱わない）
   await client.pushMessage({ to: userId, messages });
 }
