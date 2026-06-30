@@ -91,6 +91,55 @@ function renderStaffRow(staff, store, adoptedKeys) {
   return `<tr><th class="staff-name">${escapeHtml(staff.name)}</th>${cells}</tr>`;
 }
 
+const HOUR_TICKS = [];
+for (let h = 8; h <= 26; h++) HOUR_TICKS.push(h);
+
+function renderGanttHourHeader() {
+  const ticks = HOUR_TICKS.map((h) => `<span>${h}</span>`).join("");
+  return `<div class="gantt-hours">${ticks}</div>`;
+}
+
+function renderGanttBar(cell) {
+  const left = Math.max(0, Math.min(100, ((timeToMinutes(cell.start) - SCALE_START_MINUTES) / SCALE_RANGE_MINUTES) * 100));
+  const width = Math.max(1.5, Math.min(100 - left, ((timeToMinutes(cell.end) - timeToMinutes(cell.start)) / SCALE_RANGE_MINUTES) * 100));
+  const cls = cell.band === "lunch" ? "bar-lunch" : "bar-dinner";
+  const label = `${cell.start}-${cell.end || ""}`;
+  return `<div class="gantt-bar ${cls}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%" title="${escapeHtml(label)}">${escapeHtml(label)}</div>`;
+}
+
+function renderGanttDay(d, store) {
+  const workingStaff = store.staffRows
+    .map((staff) => ({ staff, cell: staff.cells[d.date] }))
+    .filter(({ cell }) => cell.type === "working");
+
+  if (!workingStaff.length) {
+    return `<div class="gantt-day">
+      <h3>${escapeHtml(d.label)} <span class="day-type">${escapeHtml(d.dayTypeLabel)}</span></h3>
+      <p class="gantt-empty">出勤希望がありません</p>
+    </div>`;
+  }
+
+  const rows = workingStaff
+    .map(({ staff, cell }) => `<div class="gantt-row">
+      <div class="gantt-name">${escapeHtml(staff.name)}</div>
+      <div class="gantt-track">${renderGanttBar(cell)}</div>
+    </div>`)
+    .join("\n");
+
+  return `<div class="gantt-day">
+    <h3>${escapeHtml(d.label)} <span class="day-type">${escapeHtml(d.dayTypeLabel)}</span></h3>
+    ${renderGanttHourHeader()}
+    ${rows}
+  </div>`;
+}
+
+function renderGanttSection(store) {
+  const days = store.dates.map((d) => renderGanttDay(d, store)).join("\n");
+  return `<h2>時間軸で見るシフト状況</h2>
+  <p class="scale-note">横軸は8:00〜26:00。バーが実際の出勤予定時間です。</p>
+  <div class="gantt-wrap">${days}</div>`;
+}
+
 function renderForm(store, key, adoptedKeys, confirmed) {
   const staffRows = store.staffRows.length
     ? store.staffRows.map((s) => renderStaffRow(s, store, adoptedKeys)).join("\n")
@@ -130,6 +179,24 @@ function renderForm(store, key, adoptedKeys, confirmed) {
   .bar-lunch-dot { background: #f2a93b; }
   .bar-dinner-dot { background: #4a78d6; }
   button { font-size: 16px; padding: 10px 24px; cursor: pointer; }
+
+  .gantt-wrap { margin-top: 16px; }
+  .gantt-day { border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; }
+  .gantt-day h3 { margin: 0 0 8px 0; font-size: 15px; }
+  .gantt-empty { color: #999; font-size: 13px; margin: 0; }
+  .gantt-hours { display: flex; justify-content: space-between; font-size: 11px; color: #888; padding-left: 100px; margin-bottom: 4px; }
+  .gantt-row { display: flex; align-items: center; margin-bottom: 6px; }
+  .gantt-name { width: 100px; flex-shrink: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .gantt-track {
+    position: relative; flex: 1; height: 24px; background: #fafafa;
+    background-image: repeating-linear-gradient(to right, #eee 0, #eee 1px, transparent 1px, transparent calc(100% / 18));
+    border: 1px solid #eee; border-radius: 4px;
+  }
+  .gantt-bar {
+    position: absolute; top: 2px; height: 20px; border-radius: 3px;
+    font-size: 10px; color: #fff; line-height: 20px; overflow: hidden;
+    white-space: nowrap; padding: 0 4px; box-sizing: border-box;
+  }
 </style>
 </head>
 <body>
@@ -155,6 +222,7 @@ ${confirmedNote}
   </div>
   <button type="submit">この内容で確定する</button>
 </form>
+${renderGanttSection(store)}
 </body>
 </html>`;
 }
