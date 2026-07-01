@@ -1,4 +1,4 @@
-const redis = require("./redisClient");
+const { redis } = require("./redisClient");
 
 // キー: support:{storeId}:{periodStart} → [{userId, name, dates: [ISO...], position, positionLabel}]
 // 「この店舗から他店舗へ応援に出せるスタッフ」を登録する

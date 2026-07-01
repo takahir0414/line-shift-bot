@@ -1,4 +1,4 @@
-const redis = require("./redisClient");
+const { redis } = require("./redisClient");
 
 // キー: budget:{storeId}:{periodStart}
 // 値: { [date]: { revenue: number, laborCost: number } }
