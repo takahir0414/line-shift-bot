@@ -3,6 +3,7 @@ const { listShiftSubmissions, getLatestPeriod } = require("../lib/shiftStore");
 const { buildStoreView, computeFulfillment } = require("../lib/shiftView");
 const { getConfirmedShift } = require("../lib/confirmedShiftStore");
 const { getBudget } = require("../lib/budgetStore");
+const { getSupportRegistrations } = require("../lib/supportStore");
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => (
@@ -55,7 +56,11 @@ function renderCard(row) {
     <div class="card-detail">期間: ${escapeHtml(row.periodStart)}（提出${row.submissionCount}名）</div>
     ${budgetSummary}
     <div class="card-detail">${confirmedText}</div>
+    ${row.support && row.support.length
+      ? `<div class="card-detail support-info">応援可: ${row.support.map((r) => `${escapeHtml(r.name)}（${escapeHtml(r.positionLabel || "")}・${r.dates.length}日）`).join("、")}</div>`
+      : ""}
     <a class="card-link" href="/api/manager?storeId=${encodeURIComponent(row.storeId)}&periodStart=${encodeURIComponent(row.periodStart)}&key=${encodeURIComponent(row.key)}">確認・確定へ</a>
+    <a class="card-link" href="/api/support?storeId=${encodeURIComponent(row.storeId)}&periodStart=${encodeURIComponent(row.periodStart)}&key=${encodeURIComponent(row.key)}" style="margin-left:8px">応援登録</a>
   </div>`;
 }
 
@@ -93,6 +98,7 @@ function renderHtmlPage(rows) {
   .ratio-ok { color: #1e7d32; font-weight: bold; }
   .ratio-warn { color: #8a6d00; font-weight: bold; }
   .ratio-bad { color: #a31515; font-weight: bold; }
+  .support-info { color: #27ae60; }
 </style>
 </head>
 <body>
@@ -131,7 +137,8 @@ module.exports = async function handler(req, res) {
     const view = buildStoreView(store.id, periodStart, submissions);
     const confirmed = await getConfirmedShift(store.id, periodStart);
     const budget = await getBudget(store.id, periodStart);
-    rows.push({ ...view, confirmed, budget, key });
+    const support = await getSupportRegistrations(store.id, periodStart);
+    rows.push({ ...view, confirmed, budget, support, key });
   }
 
   res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(renderHtmlPage(rows));

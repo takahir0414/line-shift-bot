@@ -243,7 +243,11 @@ function renderForm(store, key, adoptedKeys, confirmed, budget) {
 <h1>店長確認・確定 - ${escapeHtml(store.storeName)}</h1>
 <p>期間開始: ${escapeHtml(store.periodStart)} ／ 提出人数: ${store.submissionCount}名</p>
 <p class="scale-note">セル内の横棒は出勤時間帯のイメージです（左端8:00〜右端26:00のスケール／<span class="bar-lunch-dot"></span>昼・<span class="bar-dinner-dot"></span>夜）</p>
-<p><a class="budget-link" href="/api/budget?storeId=${escapeHtml(store.storeId)}&periodStart=${escapeHtml(store.periodStart)}&key=${escapeHtml(key)}">📊 日割り予算・人件費を入力する</a></p>
+<p>
+  <a class="budget-link" href="/api/budget?storeId=${escapeHtml(store.storeId)}&periodStart=${escapeHtml(store.periodStart)}&key=${escapeHtml(key)}">📊 日割り予算・人件費を入力する</a>
+  ／
+  <a class="budget-link" href="/api/support?storeId=${escapeHtml(store.storeId)}&periodStart=${escapeHtml(store.periodStart)}&key=${escapeHtml(key)}">🤝 応援登録</a>
+</p>
 ${confirmedNote}
 <form method="POST" action="/api/manager">
   <input type="hidden" name="key" value="${escapeHtml(key)}">
