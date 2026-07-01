@@ -314,21 +314,26 @@ module.exports = async function handler(req, res) {
       return;
     }
 
-    const periodStart = req.query.periodStart || (await getLatestPeriod(storeId));
-    if (!periodStart) {
-      res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send("<p>表示できる希望シフトデータがありません。</p>");
-      return;
+    try {
+      const periodStart = req.query.periodStart || (await getLatestPeriod(storeId));
+      if (!periodStart) {
+        res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send("<p>表示できる希望シフトデータがありません。</p>");
+        return;
+      }
+
+      const submissions = await listShiftSubmissions(storeId, periodStart);
+      const store = buildCalendarView(storeId, periodStart, submissions);
+      const confirmed = await getConfirmedShift(storeId, periodStart);
+      const adoptedKeys = confirmed
+        ? new Set(confirmed.entries.map((e) => adoptFieldName(e.userId, e.date)))
+        : null;
+      const budget = await getBudget(storeId, periodStart);
+
+      res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(renderForm(store, key, adoptedKeys, confirmed, budget));
+    } catch (err) {
+      console.error("MANAGER_GET_ERROR:", err.message, err.stack);
+      res.status(500).setHeader("Content-Type", "text/plain; charset=utf-8").send(`ERROR: ${err.message}\n\n${err.stack}`);
     }
-
-    const submissions = await listShiftSubmissions(storeId, periodStart);
-    const store = buildCalendarView(storeId, periodStart, submissions);
-    const confirmed = await getConfirmedShift(storeId, periodStart);
-    const adoptedKeys = confirmed
-      ? new Set(confirmed.entries.map((e) => adoptFieldName(e.userId, e.date)))
-      : null;
-    const budget = await getBudget(storeId, periodStart);
-
-    res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(renderForm(store, key, adoptedKeys, confirmed, budget));
     return;
   }
 
