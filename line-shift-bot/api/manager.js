@@ -2,6 +2,7 @@ const { getLatestPeriod, listShiftSubmissions } = require("../lib/shiftStore");
 const { buildCalendarView } = require("../lib/shiftView");
 const { saveConfirmedShift, getConfirmedShift } = require("../lib/confirmedShiftStore");
 const { getBudget } = require("../lib/budgetStore");
+const { getScheduleNotes, saveScheduleNotes } = require("../lib/scheduleNotesStore");
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => (
@@ -126,32 +127,20 @@ function renderStaffRow(staff, store, adoptedKeys) {
 const HOUR_TICKS = [];
 for (let h = 8; h <= 26; h++) HOUR_TICKS.push(h);
 
-function renderGanttHourHeader() {
-  const ticks = HOUR_TICKS.map((h) => `<span>${h}</span>`).join("");
-  return `<div class="gantt-hours">${ticks}</div>`;
+function ganttHourHeader() {
+  return `<div class="gantt-hours">${HOUR_TICKS.map((h) => `<span>${h}</span>`).join("")}</div>`;
 }
 
-function renderGanttBar(cell) {
-  const left = Math.max(0, Math.min(100, ((timeToMinutes(cell.start) - SCALE_START_MINUTES) / SCALE_RANGE_MINUTES) * 100));
-  const width = Math.max(1.5, Math.min(100 - left, ((timeToMinutes(cell.end) - timeToMinutes(cell.start)) / SCALE_RANGE_MINUTES) * 100));
-  const colorStyle = cell.positionColor
-    ? `style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${escapeHtml(cell.positionColor)}"`
-    : `style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"`;
-  const cls = cell.positionColor ? "gantt-bar" : `gantt-bar ${cell.band === "lunch" ? "bar-lunch" : "bar-dinner"}`;
-  const label = `${cell.start}-${cell.end || ""}${cell.positionLabel ? " " + cell.positionLabel : ""}`;
-  let breakBar = "";
-  if (cell.breakStart && cell.breakEnd) {
-    const bLeft = Math.max(0, Math.min(100, ((timeToMinutes(cell.breakStart) - SCALE_START_MINUTES) / SCALE_RANGE_MINUTES) * 100));
-    const bWidth = Math.max(1, Math.min(100 - bLeft, ((timeToMinutes(cell.breakEnd) - timeToMinutes(cell.breakStart)) / SCALE_RANGE_MINUTES) * 100));
-    breakBar = `<div class="gantt-bar gantt-bar-break" style="left:${bLeft.toFixed(2)}%;width:${bWidth.toFixed(2)}%" title="休憩 ${escapeHtml(cell.breakStart)}-${escapeHtml(cell.breakEnd)}">休憩</div>`;
-  }
-  return `<div class="${cls}" ${colorStyle} title="${escapeHtml(label)}">${escapeHtml(label)}</div>${breakBar}`;
+function barStyleCalc(startMin, endMin) {
+  const left = Math.max(0, Math.min(100, ((startMin - SCALE_START_MINUTES) / SCALE_RANGE_MINUTES) * 100));
+  const width = Math.max(1.5, Math.min(100 - left, ((endMin - startMin) / SCALE_RANGE_MINUTES) * 100));
+  return { left: left.toFixed(2), width: width.toFixed(2) };
 }
 
-function renderGanttDay(d, store) {
+function renderGanttDay(d, store, scheduleNotes) {
   const workingStaff = store.staffRows
     .map((staff) => ({ staff, cell: staff.cells[d.date] }))
-    .filter(({ cell }) => cell.type === "working");
+    .filter(({ cell }) => cell.type === "working" && cell.start && cell.end);
 
   if (!workingStaff.length) {
     return `<div class="gantt-day">
@@ -160,28 +149,238 @@ function renderGanttDay(d, store) {
     </div>`;
   }
 
-  const rows = workingStaff
-    .map(({ staff, cell }) => `<div class="gantt-row">
+  const rows = workingStaff.map(({ staff, cell }) => {
+    const noteKey = `${d.date}__${staff.userId}`;
+    const note = (scheduleNotes[d.date] || {})[staff.userId] || {};
+    const startMin = timeToMinutes(note.adjustedStart || cell.start);
+    const endMin   = timeToMinutes(note.adjustedEnd   || cell.end);
+    const { left, width } = barStyleCalc(startMin, endMin);
+    const bandCls = cell.positionColor ? "" : (cell.band === "lunch" ? " bar-lunch" : " bar-dinner");
+    const bgStyle = cell.positionColor ? `background:${escapeHtml(cell.positionColor)};` : "";
+    const startLabel = note.adjustedStart || cell.start;
+    const endLabel   = note.adjustedEnd   || cell.end;
+
+    const taskChips = (note.tasks || []).map((t) => {
+      const tLeft = Math.max(0, Math.min(99, ((t.timeMin - SCALE_START_MINUTES) / SCALE_RANGE_MINUTES) * 100));
+      return `<div class="task-chip" data-key="${escapeHtml(noteKey)}" data-time="${t.timeMin}" style="left:${tLeft.toFixed(2)}%">${escapeHtml(t.label)}<span class="task-del">×</span></div>`;
+    }).join("");
+
+    let breakBar = "";
+    if (cell.breakStart && cell.breakEnd) {
+      const bs = barStyleCalc(timeToMinutes(cell.breakStart), timeToMinutes(cell.breakEnd));
+      breakBar = `<div class="gantt-bar gantt-bar-break" style="left:${bs.left}%;width:${bs.width}%">休憩</div>`;
+    }
+
+    return `<div class="gantt-row">
       <div class="gantt-name">${escapeHtml(staff.name)}</div>
-      <div class="gantt-track">${renderGanttBar(cell)}</div>
-    </div>`)
-    .join("\n");
+      <div class="gantt-track" data-key="${escapeHtml(noteKey)}" data-date="${escapeHtml(d.date)}" data-userid="${escapeHtml(staff.userId)}" data-orig-start="${escapeHtml(cell.start)}" data-orig-end="${escapeHtml(cell.end)}">
+        <div class="gantt-bar${bandCls}" id="bar-${escapeHtml(noteKey)}" style="left:${left}%;width:${width}%;${bgStyle}" data-key="${escapeHtml(noteKey)}">
+          <div class="drag-handle drag-left" data-which="start" data-key="${escapeHtml(noteKey)}"></div>
+          <span class="bar-label">${escapeHtml(startLabel)}–${escapeHtml(endLabel)}</span>
+          <div class="drag-handle drag-right" data-which="end" data-key="${escapeHtml(noteKey)}"></div>
+        </div>
+        ${breakBar}${taskChips}
+      </div>
+    </div>`;
+  }).join("\n");
 
   return `<div class="gantt-day">
     <h3>${escapeHtml(d.label)} <span class="day-type">${escapeHtml(d.dayTypeLabel)}</span></h3>
-    ${renderGanttHourHeader()}
+    ${ganttHourHeader()}
     ${rows}
   </div>`;
 }
 
-function renderGanttSection(store) {
-  const days = store.dates.map((d) => renderGanttDay(d, store)).join("\n");
-  return `<h2>時間軸で見るシフト状況</h2>
-  <p class="scale-note">横軸は8:00〜26:00。バーが実際の出勤予定時間です。</p>
-  <div class="gantt-wrap">${days}</div>`;
+function renderInteractiveGantt(store, scheduleNotes, key) {
+  const days = store.dates.map((d) => renderGanttDay(d, store, scheduleNotes)).join("\n");
+
+  const barsData = {};
+  for (const staff of store.staffRows) {
+    for (const d of store.dates) {
+      const cell = staff.cells[d.date];
+      if (cell.type === "working" && cell.start && cell.end) {
+        const noteKey = `${d.date}__${staff.userId}`;
+        const note = (scheduleNotes[d.date] || {})[staff.userId] || {};
+        barsData[noteKey] = {
+          origStart: cell.start, origEnd: cell.end,
+          start: note.adjustedStart || cell.start,
+          end:   note.adjustedEnd   || cell.end,
+          tasks: note.tasks || [],
+          date: d.date, userId: staff.userId,
+        };
+      }
+    }
+  }
+
+  return `
+<h2>時間軸シフト編集</h2>
+<p class="scale-note">バーの端をドラッグして勤務時間を調整 ／ トラック上をダブルクリックしてタスクを追加</p>
+<button class="btn-save" onclick="saveNotes()">変更を保存</button>
+<span id="save-status" style="margin-left:12px;font-size:13px;color:#555;"></span>
+<div class="gantt-wrap">${days}</div>
+
+<div id="task-picker" style="display:none;position:fixed;background:#fff;border:1px solid #ccc;border-radius:6px;padding:12px;box-shadow:0 2px 8px rgba(0,0,0,.2);z-index:9999;min-width:200px;">
+  <div style="margin-bottom:8px;font-size:13px;font-weight:bold;">タスクを追加</div>
+  <div id="picker-labels" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;"></div>
+  <input id="picker-custom" type="text" placeholder="カスタム入力（Enterで追加）" style="width:100%;padding:4px;font-size:13px;box-sizing:border-box;border:1px solid #ccc;border-radius:3px;">
+  <div style="margin-top:8px;display:flex;gap:8px;">
+    <button onclick="confirmTask()" style="font-size:13px;padding:4px 12px;cursor:pointer;">追加</button>
+    <button onclick="closePicker()" style="font-size:13px;padding:4px 12px;cursor:pointer;">キャンセル</button>
+  </div>
+</div>
+
+<style>
+  .drag-handle { position:absolute;top:0;width:8px;height:100%;cursor:ew-resize;z-index:10; }
+  .drag-left  { left:0;  border-radius:3px 0 0 3px; background:rgba(0,0,0,.15); }
+  .drag-right { right:0; border-radius:0 3px 3px 0; background:rgba(0,0,0,.15); }
+  .drag-handle:hover { background:rgba(0,0,0,.35); }
+  .bar-label { font-size:10px;color:#fff;white-space:nowrap;overflow:hidden;padding:0 10px;line-height:20px;display:block;text-align:center; }
+  .task-chip { position:absolute;top:0;height:20px;background:#e67e22;color:#fff;font-size:10px;line-height:20px;padding:0 4px;border-radius:3px;white-space:nowrap;cursor:default;z-index:5; }
+  .task-del { margin-left:3px;cursor:pointer;opacity:.7; }
+  .task-del:hover { opacity:1; }
+  .btn-save { background:#1a56db;color:#fff;border:none;border-radius:4px;font-size:14px;padding:8px 20px;cursor:pointer; }
+  .btn-save:hover { background:#1340b0; }
+</style>
+
+<script>
+(function(){
+const SCALE_START=8*60,SCALE_END=26*60,SCALE_RANGE=18*60;
+const TASK_LABELS=['発注','レジ','日報','X','キ','確認','清掃','補充'];
+const storeId=${JSON.stringify(store.storeId)};
+const periodStart=${JSON.stringify(store.periodStart)};
+const adminKey=${JSON.stringify(key)};
+const state=JSON.parse(${JSON.stringify(JSON.stringify(barsData))});
+
+function tToM(t){const[h,m]=t.split(':').map(Number);let v=h*60+m;if(v<SCALE_START)v+=1440;return v;}
+function mToT(m){const h=Math.floor(m/60),mm=m%60;return String(h).padStart(2,'0')+':'+String(mm).padStart(2,'0');}
+function mToPct(m){return Math.max(0,Math.min(100,(m-SCALE_START)/SCALE_RANGE*100));}
+function pxToM(px,w){return Math.round(((px/w)*SCALE_RANGE+SCALE_START)/15)*15;}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function redrawBar(key){
+  const s=state[key];if(!s)return;
+  const bar=document.getElementById('bar-'+key);
+  const track=document.querySelector('.gantt-track[data-key="'+CSS.escape(key)+'"]');
+  if(!bar||!track)return;
+  const sm=tToM(s.start),em=tToM(s.end);
+  const left=mToPct(sm),width=Math.max(1.5,mToPct(em)-left);
+  bar.style.left=left+'%';bar.style.width=width+'%';
+  bar.querySelector('.bar-label').textContent=s.start+'–'+s.end;
+  track.querySelectorAll('.task-chip').forEach(el=>el.remove());
+  (s.tasks||[]).forEach(t=>{
+    const chip=document.createElement('div');
+    chip.className='task-chip';chip.dataset.key=key;chip.dataset.time=t.timeMin;
+    chip.style.left=mToPct(t.timeMin).toFixed(2)+'%';
+    chip.innerHTML=esc(t.label)+'<span class="task-del" title="削除">×</span>';
+    chip.querySelector('.task-del').addEventListener('click',e=>{
+      e.stopPropagation();
+      s.tasks=s.tasks.filter(x=>!(x.timeMin===t.timeMin&&x.label===t.label));
+      redrawBar(key);
+    });
+    track.appendChild(chip);
+  });
 }
 
-function renderForm(store, key, adoptedKeys, confirmed, budget) {
+// Drag
+let drag=null;
+document.addEventListener('mousedown',e=>{
+  const h=e.target.closest('.drag-handle');if(!h)return;
+  e.preventDefault();
+  const key=h.dataset.key;
+  const track=document.querySelector('.gantt-track[data-key="'+CSS.escape(key)+'"]');
+  drag={key,which:h.dataset.which,track};
+});
+document.addEventListener('mousemove',e=>{
+  if(!drag)return;
+  const rect=drag.track.getBoundingClientRect();
+  const raw=Math.max(SCALE_START,Math.min(SCALE_END,pxToM(e.clientX-rect.left,rect.width)));
+  const s=state[drag.key];if(!s)return;
+  if(drag.which==='start'){if(raw<tToM(s.end)-15){s.start=mToT(raw);redrawBar(drag.key);}}
+  else{if(raw>tToM(s.start)+15){s.end=mToT(raw);redrawBar(drag.key);}}
+});
+document.addEventListener('mouseup',()=>{drag=null;});
+
+// Double-click to add task
+let pickerKey=null,pickerTimeMin=null;
+document.querySelectorAll('.gantt-track').forEach(track=>{
+  track.addEventListener('dblclick',e=>{
+    if(e.target.closest('.gantt-bar')||e.target.closest('.task-chip'))return;
+    const rect=track.getBoundingClientRect();
+    const raw=Math.max(SCALE_START,Math.min(SCALE_END-15,pxToM(e.clientX-rect.left,rect.width)));
+    pickerKey=track.dataset.key;pickerTimeMin=raw;
+    openPicker(e.clientX,e.clientY);
+  });
+});
+
+// Init existing task chips delete handlers
+document.querySelectorAll('.task-chip .task-del').forEach(el=>{
+  el.addEventListener('click',e=>{
+    e.stopPropagation();
+    const chip=e.target.closest('.task-chip');
+    const key=chip.dataset.key,timeMin=parseInt(chip.dataset.time);
+    if(state[key])state[key].tasks=state[key].tasks.filter(t=>t.timeMin!==timeMin);
+    redrawBar(key);
+  });
+});
+
+function openPicker(x,y){
+  const picker=document.getElementById('task-picker');
+  const labels=document.getElementById('picker-labels');
+  labels.innerHTML='';
+  TASK_LABELS.forEach(l=>{
+    const btn=document.createElement('button');
+    btn.textContent=l;btn.style.cssText='font-size:12px;padding:3px 8px;cursor:pointer;border:1px solid #ccc;border-radius:3px;background:#f5f5f5;';
+    btn.addEventListener('click',()=>{document.getElementById('picker-custom').value=l;});
+    labels.appendChild(btn);
+  });
+  document.getElementById('picker-custom').value='';
+  picker.style.display='block';
+  picker.style.left=Math.min(x,window.innerWidth-220)+'px';
+  picker.style.top=Math.min(y,window.innerHeight-180)+'px';
+  setTimeout(()=>document.getElementById('picker-custom').focus(),50);
+}
+function closePicker(){document.getElementById('task-picker').style.display='none';pickerKey=null;pickerTimeMin=null;}
+function confirmTask(){
+  const label=document.getElementById('picker-custom').value.trim();
+  if(!label||!pickerKey){closePicker();return;}
+  if(!state[pickerKey])state[pickerKey]={tasks:[]};
+  state[pickerKey].tasks=state[pickerKey].tasks||[];
+  state[pickerKey].tasks.push({timeMin:pickerTimeMin,label});
+  redrawBar(pickerKey);
+  closePicker();
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')closePicker();
+  if(e.key==='Enter'&&document.getElementById('task-picker').style.display==='block')confirmTask();
+});
+
+// Save
+window.saveNotes=function(){
+  const notes={};
+  for(const[key,s]of Object.entries(state)){
+    const[date,userId]=key.split('__');
+    if(!notes[date])notes[date]={};
+    notes[date][userId]={
+      adjustedStart:s.start!==s.origStart?s.start:null,
+      adjustedEnd:s.end!==s.origEnd?s.end:null,
+      tasks:s.tasks||[],
+    };
+  }
+  const status=document.getElementById('save-status');
+  status.textContent='保存中…';
+  fetch('/api/schedule',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({storeId,periodStart,key:adminKey,notes}),
+  }).then(r=>r.json()).then(r=>{
+    status.textContent=r.ok?'✓ 保存しました':'保存失敗: '+r.error;
+  }).catch(()=>{status.textContent='保存エラー';});
+};
+})();
+</script>`;
+}
+
+function renderForm(store, key, adoptedKeys, confirmed, budget, scheduleNotes) {
   const staffRows = store.staffRows.length
     ? store.staffRows.map((s) => renderStaffRow(s, store, adoptedKeys)).join("\n")
     : `<tr><th class="staff-name">-</th><td colspan="${store.dates.length}">出勤希望の提出がありません</td></tr>`;
@@ -236,15 +435,17 @@ function renderForm(store, key, adoptedKeys, confirmed, budget) {
   .gantt-track {
     position: relative; flex: 1; height: 24px; background: #fafafa;
     background-image: repeating-linear-gradient(to right, #eee 0, #eee 1px, transparent 1px, transparent calc(100% / 18));
-    border: 1px solid #eee; border-radius: 4px;
+    border: 1px solid #eee; border-radius: 4px; cursor: crosshair;
   }
   .gantt-bar {
     position: absolute; top: 2px; height: 20px; border-radius: 3px;
-    font-size: 10px; color: #fff; line-height: 20px; overflow: hidden;
-    white-space: nowrap; padding: 0 4px; box-sizing: border-box;
+    font-size: 10px; color: #fff; line-height: 20px; overflow: visible;
+    white-space: nowrap; box-sizing: border-box; cursor: default;
+    display: flex; align-items: center;
   }
   .gantt-bar-break {
-    background: #aaa !important; color: #333; z-index: 2;
+    background: #aaa !important; color: #333; z-index: 2; overflow: hidden;
+    font-size: 10px; display: flex; align-items: center; padding: 0 4px;
   }
 </style>
 </head>
@@ -278,7 +479,7 @@ ${confirmedNote}
   </div>
   <button type="submit">この内容で確定する</button>
 </form>
-${renderGanttSection(store)}
+${renderInteractiveGantt(store, scheduleNotes, key)}
 </body>
 </html>`;
 }
@@ -327,8 +528,9 @@ module.exports = async function handler(req, res) {
       ? new Set(confirmed.entries.map((e) => adoptFieldName(e.userId, e.date)))
       : null;
     const budget = await getBudget(storeId, periodStart);
+    const scheduleNotes = await getScheduleNotes(storeId, periodStart);
 
-    res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(renderForm(store, key, adoptedKeys, confirmed, budget));
+    res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(renderForm(store, key, adoptedKeys, confirmed, budget, scheduleNotes));
     return;
   }
 
