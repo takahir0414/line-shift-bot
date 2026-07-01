@@ -8,6 +8,8 @@ const {
   registrationCompleteMessage,
   daySelectMessage,
   timePickerMessage,
+  breakChoiceMessage,
+  breakTimePickerMessage,
   positionSelectMessage,
   summaryMessage,
   buildPeriodDates,
@@ -122,6 +124,8 @@ async function startShiftRequest(userId, replyToken, session) {
   session.timeEntryQueue = [];
   session.pendingDate = null;
   session.pendingStartTime = null;
+  session.pendingBreakDate = null;
+  session.pendingBreakStart = null;
   session.position = null;
   await setSession(userId, session);
   await reply(replyToken, [daySelectMessage(session)]);
@@ -202,8 +206,10 @@ async function handlePostback(userId, replyToken, session, event) {
         session.timeEntries[date] = { start: session.pendingStartTime, end: time };
         session.pendingStartTime = null;
         session.timeEntryQueue.shift();
+        session.pendingBreakDate = date;
+        session.requestStep = "entering_break";
         await setSession(userId, session);
-        await advanceTimeEntry(userId, replyToken, session);
+        await reply(replyToken, [breakChoiceMessage(date)]);
         return;
       }
       return;
@@ -217,6 +223,50 @@ async function handlePostback(userId, replyToken, session, event) {
       session.pendingStartTime = null;
       await setSession(userId, session);
       await reply(replyToken, [daySelectMessage(session)]);
+      return;
+    }
+
+    case "break_choice": {
+      if (session.requestStep !== "entering_break") return;
+      const has = params.get("has");
+      const date = params.get("date");
+      if (date !== session.pendingBreakDate) return;
+      if (has === "yes") {
+        session.requestStep = "entering_break_time";
+        await setSession(userId, session);
+        await reply(replyToken, [breakTimePickerMessage(date, "start")]);
+      } else {
+        session.pendingBreakDate = null;
+        session.requestStep = "entering_time";
+        await setSession(userId, session);
+        await advanceTimeEntry(userId, replyToken, session);
+      }
+      return;
+    }
+
+    case "set_break": {
+      if (session.requestStep !== "entering_break_time") return;
+      const which = params.get("which");
+      const date = params.get("date");
+      const time = event.postback.params && event.postback.params.time;
+      if (!time || date !== session.pendingBreakDate) return;
+      if (which === "start") {
+        session.pendingBreakStart = time;
+        await setSession(userId, session);
+        await reply(replyToken, [breakTimePickerMessage(date, "end")]);
+        return;
+      }
+      if (which === "end") {
+        if (!session.timeEntries[date]) session.timeEntries[date] = {};
+        session.timeEntries[date].breakStart = session.pendingBreakStart;
+        session.timeEntries[date].breakEnd = time;
+        session.pendingBreakDate = null;
+        session.pendingBreakStart = null;
+        session.requestStep = "entering_time";
+        await setSession(userId, session);
+        await advanceTimeEntry(userId, replyToken, session);
+        return;
+      }
       return;
     }
 

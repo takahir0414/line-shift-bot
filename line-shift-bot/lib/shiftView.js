@@ -38,6 +38,8 @@ function buildStoreView(storeId, periodStart, submissions) {
           userId,
           start: entry ? entry.start : null,
           end: entry ? entry.end : null,
+          breakStart: entry ? (entry.breakStart || null) : null,
+          breakEnd: entry ? (entry.breakEnd || null) : null,
           position: submission.position || null,
           positionLabel: pos ? pos.label : null,
           positionColor: pos ? pos.color : null,
@@ -114,9 +116,9 @@ function buildCalendarView(storeId, periodStart, submissions) {
       const dinnerEntry = d.dinner.entries.find((e) => e.userId === userId);
       const dayOffEntry = d.dayOff.find((e) => e.userId === userId);
       if (lunchEntry) {
-        cells[d.date] = { type: "working", band: "lunch", start: lunchEntry.start, end: lunchEntry.end, position: lunchEntry.position, positionLabel: lunchEntry.positionLabel, positionColor: lunchEntry.positionColor };
+        cells[d.date] = { type: "working", band: "lunch", start: lunchEntry.start, end: lunchEntry.end, breakStart: lunchEntry.breakStart, breakEnd: lunchEntry.breakEnd, position: lunchEntry.position, positionLabel: lunchEntry.positionLabel, positionColor: lunchEntry.positionColor };
       } else if (dinnerEntry) {
-        cells[d.date] = { type: "working", band: "dinner", start: dinnerEntry.start, end: dinnerEntry.end, position: dinnerEntry.position, positionLabel: dinnerEntry.positionLabel, positionColor: dinnerEntry.positionColor };
+        cells[d.date] = { type: "working", band: "dinner", start: dinnerEntry.start, end: dinnerEntry.end, breakStart: dinnerEntry.breakStart, breakEnd: dinnerEntry.breakEnd, position: dinnerEntry.position, positionLabel: dinnerEntry.positionLabel, positionColor: dinnerEntry.positionColor };
       } else if (dayOffEntry) {
         cells[d.date] = { type: "dayoff" };
       } else {

@@ -291,6 +291,48 @@ function summaryMessage(session) {
   };
 }
 
+/** 休憩の有無確認 */
+function breakChoiceMessage(dateISO) {
+  return {
+    type: "template",
+    altText: `${formatMD(dateISO)}に休憩はありますか？`,
+    template: {
+      type: "buttons",
+      title: `${weekdayLabel(dateISO)} ${formatMD(dateISO)}`,
+      text: "この日に休憩はありますか？（任意）",
+      actions: [
+        { type: "postback", label: "休憩あり（時間を入力）", data: `action=break_choice&has=yes&date=${dateISO}` },
+        { type: "postback", label: "なし / スキップ", data: `action=break_choice&has=no&date=${dateISO}` },
+      ],
+    },
+  };
+}
+
+/** 休憩の開始/終了時刻のdatetimepicker */
+function breakTimePickerMessage(dateISO, which) {
+  const label = which === "start" ? "休憩開始時刻" : "休憩終了時刻";
+  return {
+    type: "template",
+    altText: `${formatMD(dateISO)}の${label}を選択してください`,
+    template: {
+      type: "buttons",
+      title: `${weekdayLabel(dateISO)} ${formatMD(dateISO)}`,
+      text: `${label}を選択してください`,
+      actions: [
+        {
+          type: "datetimepicker",
+          label: `${label}を選ぶ`,
+          data: `action=set_break&which=${which}&date=${dateISO}`,
+          mode: "time",
+          initial: which === "start" ? "15:00" : "16:00",
+          min: "00:00",
+          max: "23:59",
+        },
+      ],
+    },
+  };
+}
+
 /** ポジション選択（シフト提出フロー） */
 function positionSelectMessage() {
   return {
@@ -334,6 +376,8 @@ module.exports = {
   registrationCompleteMessage,
   daySelectMessage,
   timePickerMessage,
+  breakChoiceMessage,
+  breakTimePickerMessage,
   positionSelectMessage,
   summaryMessage,
   buildPeriodDates,

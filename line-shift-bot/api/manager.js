@@ -139,7 +139,13 @@ function renderGanttBar(cell) {
     : `style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"`;
   const cls = cell.positionColor ? "gantt-bar" : `gantt-bar ${cell.band === "lunch" ? "bar-lunch" : "bar-dinner"}`;
   const label = `${cell.start}-${cell.end || ""}${cell.positionLabel ? " " + cell.positionLabel : ""}`;
-  return `<div class="${cls}" ${colorStyle} title="${escapeHtml(label)}">${escapeHtml(label)}</div>`;
+  let breakBar = "";
+  if (cell.breakStart && cell.breakEnd) {
+    const bLeft = Math.max(0, Math.min(100, ((timeToMinutes(cell.breakStart) - SCALE_START_MINUTES) / SCALE_RANGE_MINUTES) * 100));
+    const bWidth = Math.max(1, Math.min(100 - bLeft, ((timeToMinutes(cell.breakEnd) - timeToMinutes(cell.breakStart)) / SCALE_RANGE_MINUTES) * 100));
+    breakBar = `<div class="gantt-bar gantt-bar-break" style="left:${bLeft.toFixed(2)}%;width:${bWidth.toFixed(2)}%" title="休憩 ${escapeHtml(cell.breakStart)}-${escapeHtml(cell.breakEnd)}">休憩</div>`;
+  }
+  return `<div class="${cls}" ${colorStyle} title="${escapeHtml(label)}">${escapeHtml(label)}</div>${breakBar}`;
 }
 
 function renderGanttDay(d, store) {
@@ -236,6 +242,9 @@ function renderForm(store, key, adoptedKeys, confirmed, budget) {
     position: absolute; top: 2px; height: 20px; border-radius: 3px;
     font-size: 10px; color: #fff; line-height: 20px; overflow: hidden;
     white-space: nowrap; padding: 0 4px; box-sizing: border-box;
+  }
+  .gantt-bar-break {
+    background: #aaa !important; color: #333; z-index: 2;
   }
 </style>
 </head>
