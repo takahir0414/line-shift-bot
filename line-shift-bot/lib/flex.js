@@ -1,4 +1,4 @@
-const { STORES, EMPLOYMENT_TYPES, WEEKDAY_LABELS } = require("./constants");
+const { STORES, EMPLOYMENT_TYPES, WEEKDAY_LABELS, POSITIONS } = require("./constants");
 
 const NAVY = "#1B2A4A";
 const RED = "#C8102E";
@@ -291,6 +291,29 @@ function summaryMessage(session) {
   };
 }
 
+/** ポジション選択（シフト提出フロー） */
+function positionSelectMessage() {
+  return {
+    type: "flex",
+    altText: "ポジションを選択してください",
+    contents: {
+      type: "bubble",
+      header: bubbleHeader("ポジションを選択してください"),
+      body: {
+        type: "box",
+        layout: "vertical",
+        spacing: "sm",
+        contents: POSITIONS.map((p) => ({
+          type: "button",
+          style: "primary",
+          color: p.color,
+          action: { type: "postback", label: p.label, data: `action=select_position&positionId=${p.id}` },
+        })),
+      },
+    },
+  };
+}
+
 function bubbleHeader(text) {
   return {
     type: "box",
@@ -311,6 +334,7 @@ module.exports = {
   registrationCompleteMessage,
   daySelectMessage,
   timePickerMessage,
+  positionSelectMessage,
   summaryMessage,
   buildPeriodDates,
   toISODate,

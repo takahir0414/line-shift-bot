@@ -42,4 +42,12 @@ const REQUIRED_HEADCOUNT = STORES.reduce((acc, store) => {
   return acc;
 }, {});
 
-module.exports = { STORES, EMPLOYMENT_TYPES, SHIFT_PERIOD_DAYS, WEEKDAY_LABELS, REQUIRED_HEADCOUNT };
+// スタッフの役割・ポジション（色付きで表示。追加・変更はここを更新してください）
+const POSITIONS = [
+  { id: "hall", label: "ホール", color: "#4a78d6" },
+  { id: "kitchen", label: "キッチン", color: "#e05c2a" },
+  { id: "hall_pitching", label: "ホールピッチング", color: "#9b59b6" },
+  { id: "dentohan", label: "伝統販売", color: "#27ae60" },
+];
+
+module.exports = { STORES, EMPLOYMENT_TYPES, SHIFT_PERIOD_DAYS, WEEKDAY_LABELS, REQUIRED_HEADCOUNT, POSITIONS };

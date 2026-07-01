@@ -25,14 +25,19 @@ function timeToMinutes(time) {
   return minutes;
 }
 
-function renderTimeBar(start, end, band) {
+function renderTimeBar(start, end, band, positionColor) {
   if (!start || !end) return "";
   const startMin = timeToMinutes(start);
   const endMin = timeToMinutes(end);
   const left = Math.max(0, Math.min(100, ((startMin - SCALE_START_MINUTES) / SCALE_RANGE_MINUTES) * 100));
   const width = Math.max(2, Math.min(100 - left, ((endMin - startMin) / SCALE_RANGE_MINUTES) * 100));
-  const cls = band === "lunch" ? "bar-lunch" : "bar-dinner";
-  return `<div class="time-bar-track"><div class="time-bar-fill ${cls}" style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%"></div></div>`;
+  const fillStyle = positionColor
+    ? `style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%;background:${escapeHtml(positionColor)}"`
+    : `class="time-bar-fill ${band === "lunch" ? "bar-lunch" : "bar-dinner"}" style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%"`;
+  const fillTag = positionColor
+    ? `<div class="time-bar-fill" ${fillStyle}></div>`
+    : `<div ${fillStyle}></div>`;
+  return `<div class="time-bar-track">${fillTag}</div>`;
 }
 
 const STATUS_LABELS = { shortage: "不足", surplus: "過剰", ok: "OK", unset: "-" };
@@ -99,12 +104,15 @@ function renderCell(cell, userId, date, adoptedKeys) {
   const checked = adoptedKeys === null || adoptedKeys.has(fieldName) ? "checked" : "";
   const time = cell.start ? `${cell.start}-${cell.end || ""}` : "時間未入力";
   const bandLabel = cell.band === "lunch" ? "昼" : "夜";
+  const posTag = cell.positionLabel
+    ? `<span class="cell-pos" style="background:${escapeHtml(cell.positionColor || "#888")}">${escapeHtml(cell.positionLabel)}</span>`
+    : "";
   return `<td class="cell-working">
     <label class="cell-checkbox">
       <input type="checkbox" name="${escapeHtml(fieldName)}" ${checked}>
-      <span class="cell-band">${escapeHtml(bandLabel)}</span><br>${escapeHtml(time)}
+      <span class="cell-band">${escapeHtml(bandLabel)}</span>${posTag}<br>${escapeHtml(time)}
     </label>
-    ${renderTimeBar(cell.start, cell.end, cell.band)}
+    ${renderTimeBar(cell.start, cell.end, cell.band, cell.positionColor)}
   </td>`;
 }
 
@@ -126,9 +134,12 @@ function renderGanttHourHeader() {
 function renderGanttBar(cell) {
   const left = Math.max(0, Math.min(100, ((timeToMinutes(cell.start) - SCALE_START_MINUTES) / SCALE_RANGE_MINUTES) * 100));
   const width = Math.max(1.5, Math.min(100 - left, ((timeToMinutes(cell.end) - timeToMinutes(cell.start)) / SCALE_RANGE_MINUTES) * 100));
-  const cls = cell.band === "lunch" ? "bar-lunch" : "bar-dinner";
-  const label = `${cell.start}-${cell.end || ""}`;
-  return `<div class="gantt-bar ${cls}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%" title="${escapeHtml(label)}">${escapeHtml(label)}</div>`;
+  const colorStyle = cell.positionColor
+    ? `style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${escapeHtml(cell.positionColor)}"`
+    : `style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"`;
+  const cls = cell.positionColor ? "gantt-bar" : `gantt-bar ${cell.band === "lunch" ? "bar-lunch" : "bar-dinner"}`;
+  const label = `${cell.start}-${cell.end || ""}${cell.positionLabel ? " " + cell.positionLabel : ""}`;
+  return `<div class="${cls}" ${colorStyle} title="${escapeHtml(label)}">${escapeHtml(label)}</div>`;
 }
 
 function renderGanttDay(d, store) {
@@ -190,6 +201,7 @@ function renderForm(store, key, adoptedKeys, confirmed, budget) {
   .cell-dayoff { color: #888; background: #f0f0f0; }
   .cell-checkbox { display: inline-block; cursor: pointer; }
   .cell-band { font-size: 10px; color: #888; }
+  .cell-pos { font-size: 10px; color: #fff; border-radius: 3px; padding: 0 3px; margin-left: 3px; }
   .time-bar-track { position: relative; width: 64px; height: 6px; background: #eee; border-radius: 3px; margin: 4px auto 0; }
   .time-bar-fill { position: absolute; top: 0; height: 100%; border-radius: 3px; }
   .bar-lunch { background: #f2a93b; }

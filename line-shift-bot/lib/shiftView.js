@@ -5,7 +5,9 @@
  * 過不足ステータス付きビューに変換する。api/shifts.js・api/manager.js・api/dashboard.js
  * から共通で利用する。
  */
-const { STORES, REQUIRED_HEADCOUNT } = require("./constants");
+const { STORES, REQUIRED_HEADCOUNT, POSITIONS } = require("./constants");
+
+const positionById = POSITIONS.reduce((acc, p) => { acc[p.id] = p; return acc; }, {});
 const { buildPeriodDates, formatMD, weekdayLabel } = require("./flex");
 const { analyzeDay } = require("./shiftAnalysis");
 
@@ -30,11 +32,15 @@ function buildStoreView(storeId, periodStart, submissions) {
         dayOff.push({ name, userId });
       } else if (submission.selectedDates && submission.selectedDates.includes(iso)) {
         const entry = submission.timeEntries && submission.timeEntries[iso];
+        const pos = submission.position ? positionById[submission.position] : null;
         working.push({
           name,
           userId,
           start: entry ? entry.start : null,
           end: entry ? entry.end : null,
+          position: submission.position || null,
+          positionLabel: pos ? pos.label : null,
+          positionColor: pos ? pos.color : null,
         });
       }
     }
@@ -108,9 +114,9 @@ function buildCalendarView(storeId, periodStart, submissions) {
       const dinnerEntry = d.dinner.entries.find((e) => e.userId === userId);
       const dayOffEntry = d.dayOff.find((e) => e.userId === userId);
       if (lunchEntry) {
-        cells[d.date] = { type: "working", band: "lunch", start: lunchEntry.start, end: lunchEntry.end };
+        cells[d.date] = { type: "working", band: "lunch", start: lunchEntry.start, end: lunchEntry.end, position: lunchEntry.position, positionLabel: lunchEntry.positionLabel, positionColor: lunchEntry.positionColor };
       } else if (dinnerEntry) {
-        cells[d.date] = { type: "working", band: "dinner", start: dinnerEntry.start, end: dinnerEntry.end };
+        cells[d.date] = { type: "working", band: "dinner", start: dinnerEntry.start, end: dinnerEntry.end, position: dinnerEntry.position, positionLabel: dinnerEntry.positionLabel, positionColor: dinnerEntry.positionColor };
       } else if (dayOffEntry) {
         cells[d.date] = { type: "dayoff" };
       } else {

@@ -8,6 +8,7 @@ const {
   registrationCompleteMessage,
   daySelectMessage,
   timePickerMessage,
+  positionSelectMessage,
   summaryMessage,
   buildPeriodDates,
   toISODate,
@@ -121,6 +122,7 @@ async function startShiftRequest(userId, replyToken, session) {
   session.timeEntryQueue = [];
   session.pendingDate = null;
   session.pendingStartTime = null;
+  session.position = null;
   await setSession(userId, session);
   await reply(replyToken, [daySelectMessage(session)]);
 }
@@ -163,6 +165,16 @@ async function handlePostback(userId, replyToken, session, event) {
       if (session.requestStep !== "selecting_days") return;
       if (session.selectedDates.length === 0 && session.dayOffDates.length === 0) {
         await reply(replyToken, [{ type: "text", text: "希望日が選択されていません。日付をタップして選んでください。" }]);
+        return;
+      }
+      // 社員は時間入力なし → 直接ポジション選択へ
+      if (session.profile.employmentType === "fulltime") {
+        session.requestStep = "selecting_position";
+        await setSession(userId, session);
+        await reply(replyToken, [
+          { type: "text", text: "ポジションを選択してください。" },
+          positionSelectMessage(),
+        ]);
         return;
       }
       session.requestStep = "entering_time";
@@ -208,6 +220,15 @@ async function handlePostback(userId, replyToken, session, event) {
       return;
     }
 
+    case "select_position": {
+      if (session.requestStep !== "selecting_position") return;
+      session.position = params.get("positionId");
+      session.requestStep = "confirming";
+      await setSession(userId, session);
+      await reply(replyToken, [summaryMessage(session)]);
+      return;
+    }
+
     case "submit": {
       const submission = {
         userId,
@@ -216,6 +237,7 @@ async function handlePostback(userId, replyToken, session, event) {
         selectedDates: session.selectedDates,
         dayOffDates: session.dayOffDates,
         timeEntries: session.timeEntries,
+        position: session.position || null,
         submittedAt: new Date().toISOString(),
       };
       console.log("SHIFT_SUBMISSION", JSON.stringify(submission));
@@ -250,10 +272,13 @@ function cycleDayState(session, date, isEmployee) {
 
 async function advanceTimeEntry(userId, replyToken, session) {
   if (session.timeEntryQueue.length === 0) {
-    session.requestStep = "confirming";
+    session.requestStep = "selecting_position";
     session.pendingDate = null;
     await setSession(userId, session);
-    await reply(replyToken, [summaryMessage(session)]);
+    await reply(replyToken, [
+      { type: "text", text: "時間入力が完了しました！\n次に今回のポジションを選択してください。" },
+      positionSelectMessage(),
+    ]);
     return;
   }
   const nextDate = session.timeEntryQueue[0];
