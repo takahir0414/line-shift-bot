@@ -1,6 +1,7 @@
 const { getLatestPeriod, listShiftSubmissions } = require("../lib/shiftStore");
 const { buildCalendarView } = require("../lib/shiftView");
 const { saveConfirmedShift, getConfirmedShift } = require("../lib/confirmedShiftStore");
+const { getBudget } = require("../lib/budgetStore");
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => (
@@ -65,6 +66,29 @@ function renderDayTypeRow(store) {
     .map((d) => `<td>${escapeHtml(d.label)}<br><span class="day-type">${escapeHtml(d.dayTypeLabel)}</span></td>`)
     .join("\n");
   return `<tr><th>日付</th>${cells}</tr>`;
+}
+
+function renderBudgetRow(store, budget) {
+  const cells = store.dates.map((d) => {
+    const b = budget[d.date] || {};
+    const rev = b.revenue ? `¥${b.revenue.toLocaleString()}` : "-";
+    return `<td>${escapeHtml(rev)}</td>`;
+  }).join("\n");
+  return `<tr class="row-meta"><th>売上予算</th>${cells}</tr>`;
+}
+
+function renderLaborRow(store, budget) {
+  const cells = store.dates.map((d) => {
+    const b = budget[d.date] || {};
+    const lab = b.laborCost ? `¥${b.laborCost.toLocaleString()}` : "-";
+    const ratio = (b.revenue && b.laborCost)
+      ? Math.round(b.laborCost / b.revenue * 100)
+      : null;
+    const cls = ratio === null ? "" : ratio <= 30 ? "ratio-ok" : ratio <= 35 ? "ratio-warn" : "ratio-bad";
+    const ratioText = ratio !== null ? `<br><span class="${cls}">${ratio}%</span>` : "";
+    return `<td>${escapeHtml(lab)}${ratioText}</td>`;
+  }).join("\n");
+  return `<tr class="row-meta"><th>人件費（率）</th>${cells}</tr>`;
 }
 
 function renderCell(cell, userId, date, adoptedKeys) {
@@ -140,7 +164,7 @@ function renderGanttSection(store) {
   <div class="gantt-wrap">${days}</div>`;
 }
 
-function renderForm(store, key, adoptedKeys, confirmed) {
+function renderForm(store, key, adoptedKeys, confirmed, budget) {
   const staffRows = store.staffRows.length
     ? store.staffRows.map((s) => renderStaffRow(s, store, adoptedKeys)).join("\n")
     : `<tr><th class="staff-name">-</th><td colspan="${store.dates.length}">出勤希望の提出がありません</td></tr>`;
@@ -174,6 +198,10 @@ function renderForm(store, key, adoptedKeys, confirmed) {
   .status-surplus { background: #fff4ce; color: #8a6d00; }
   .status-ok { background: #e3f6e5; color: #1e7d32; }
   .confirmed-note { color: #555; background: #f5f5f5; padding: 8px 12px; border-radius: 4px; }
+  .ratio-ok { color: #1e7d32; font-weight: bold; }
+  .ratio-warn { color: #8a6d00; font-weight: bold; }
+  .ratio-bad { color: #a31515; font-weight: bold; }
+  .budget-link { font-size: 13px; color: #1a56db; }
   .scale-note { font-size: 12px; color: #777; }
   .bar-lunch-dot, .bar-dinner-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin: 0 2px; }
   .bar-lunch-dot { background: #f2a93b; }
@@ -203,6 +231,7 @@ function renderForm(store, key, adoptedKeys, confirmed) {
 <h1>店長確認・確定 - ${escapeHtml(store.storeName)}</h1>
 <p>期間開始: ${escapeHtml(store.periodStart)} ／ 提出人数: ${store.submissionCount}名</p>
 <p class="scale-note">セル内の横棒は出勤時間帯のイメージです（左端8:00〜右端26:00のスケール／<span class="bar-lunch-dot"></span>昼・<span class="bar-dinner-dot"></span>夜）</p>
+<p><a class="budget-link" href="/api/budget?storeId=${escapeHtml(store.storeId)}&periodStart=${escapeHtml(store.periodStart)}&key=${escapeHtml(key)}">📊 日割り予算・人件費を入力する</a></p>
 ${confirmedNote}
 <form method="POST" action="/api/manager">
   <input type="hidden" name="key" value="${escapeHtml(key)}">
@@ -212,6 +241,8 @@ ${confirmedNote}
     <table>
       <thead>${renderDayTypeRow(store)}</thead>
       <tbody>
+        ${renderBudgetRow(store, budget)}
+        ${renderLaborRow(store, budget)}
         ${renderRequiredRow("ランチ", store, "lunch")}
         ${renderFulfillmentRow("ランチ", store, "lunch")}
         ${renderRequiredRow("ディナー", store, "dinner")}
@@ -270,8 +301,9 @@ module.exports = async function handler(req, res) {
     const adoptedKeys = confirmed
       ? new Set(confirmed.entries.map((e) => adoptFieldName(e.userId, e.date)))
       : null;
+    const budget = await getBudget(storeId, periodStart);
 
-    res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(renderForm(store, key, adoptedKeys, confirmed));
+    res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(renderForm(store, key, adoptedKeys, confirmed, budget));
     return;
   }
 

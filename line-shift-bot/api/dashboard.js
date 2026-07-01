@@ -2,6 +2,7 @@ const { STORES } = require("../lib/constants");
 const { listShiftSubmissions, getLatestPeriod } = require("../lib/shiftStore");
 const { buildStoreView, computeFulfillment } = require("../lib/shiftView");
 const { getConfirmedShift } = require("../lib/confirmedShiftStore");
+const { getBudget } = require("../lib/budgetStore");
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (c) => (
@@ -31,6 +32,19 @@ function renderCard(row) {
     ? `確定済み（${escapeHtml(row.confirmed.confirmedAt)} ／ ${row.confirmed.entries.length}件）`
     : "未確定";
 
+  // 予算サマリー
+  let budgetSummary = "";
+  if (row.budget) {
+    const entries = Object.values(row.budget);
+    const totalRev = entries.reduce((s, b) => s + (b.revenue || 0), 0);
+    const totalLab = entries.reduce((s, b) => s + (b.laborCost || 0), 0);
+    if (totalRev > 0) {
+      const ratio = Math.round(totalLab / totalRev * 100);
+      const cls = ratio <= 30 ? "ratio-ok" : ratio <= 35 ? "ratio-warn" : "ratio-bad";
+      budgetSummary = `<div class="card-detail">予算: ¥${totalRev.toLocaleString()} ／ 人件費率: <span class="${cls}">${ratio}%</span></div>`;
+    }
+  }
+
   return `<div class="card">
     <div class="card-head">
       <div class="card-title">${escapeHtml(row.storeName)}</div>
@@ -39,6 +53,7 @@ function renderCard(row) {
     <div class="card-rate">${escapeHtml(rateText)}</div>
     <div class="card-detail">不足コマ: ${row.shortageSlots} ／ 過剰コマ: ${row.surplusSlots}</div>
     <div class="card-detail">期間: ${escapeHtml(row.periodStart)}（提出${row.submissionCount}名）</div>
+    ${budgetSummary}
     <div class="card-detail">${confirmedText}</div>
     <a class="card-link" href="/api/manager?storeId=${encodeURIComponent(row.storeId)}&periodStart=${encodeURIComponent(row.periodStart)}&key=${encodeURIComponent(row.key)}">確認・確定へ</a>
   </div>`;
@@ -75,6 +90,9 @@ function renderHtmlPage(rows) {
   .badge-warn { background: #fff4ce; color: #8a6d00; }
   .badge-danger { background: #fde2e2; color: #a31515; }
   .badge-unset { background: #eee; color: #888; }
+  .ratio-ok { color: #1e7d32; font-weight: bold; }
+  .ratio-warn { color: #8a6d00; font-weight: bold; }
+  .ratio-bad { color: #a31515; font-weight: bold; }
 </style>
 </head>
 <body>
@@ -112,7 +130,8 @@ module.exports = async function handler(req, res) {
     const submissions = await listShiftSubmissions(store.id, periodStart);
     const view = buildStoreView(store.id, periodStart, submissions);
     const confirmed = await getConfirmedShift(store.id, periodStart);
-    rows.push({ ...view, confirmed, key });
+    const budget = await getBudget(store.id, periodStart);
+    rows.push({ ...view, confirmed, budget, key });
   }
 
   res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(renderHtmlPage(rows));
